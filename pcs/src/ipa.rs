@@ -82,8 +82,6 @@ impl<E: Pairing> InnerProductProof<E> {
 
         let h_coeffs = &h_poly.coeffs;
         let s_coeffs = &h_coeffs[(h_coeffs.len() / 2 + 1)..];
-        println!("h_coeffs: {:?}", h_coeffs);
-        println!("s_coeffs: {:?}", s_coeffs);
 
         let s_poly = DensePolynomial::from_coefficients_slice(s_coeffs);
 
