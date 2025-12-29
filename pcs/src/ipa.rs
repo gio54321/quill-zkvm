@@ -31,10 +31,6 @@ use crate::kzg::KZGOpeningProof;
 /// 
 /// using suitable KZG opening proofs.
 pub struct InnerProductProof<E: Pairing> {
-    /// kzg commitment to the first polynomial
-    pub comm1 : E::G1,
-    /// kzg commitment to the second polynomial
-    pub comm2 : E::G1,
     /// The result of the inner product
     pub inner_product: E::ScalarField,
     /// Commitment to the S polynomial
@@ -50,18 +46,17 @@ pub struct InnerProductProof<E: Pairing> {
 }
 
 impl<E: Pairing> InnerProductProof<E> {
-    pub fn prove(poly1 : &[E::ScalarField], poly2: &[E::ScalarField], kzg: &super::kzg::KZG<E>) -> Self {
-        // commit to the two polynomials
-        let comm1 = kzg.commit(poly1);
-        let comm2 = kzg.commit(poly2);
-
+    /// Prove the inner product of two polynomials
+    /// 
+    /// ASSUMES: the commitments to the polynomials have been already incorporated into the transcript
+    pub fn prove(poly1 : &[E::ScalarField], poly2: &[E::ScalarField], kzg: &super::kzg::KZG<E>, transcript: &mut Transcript) -> Self {
         // the first thing to do is to find the inner product
         let mut inner_product = E::ScalarField::zero();
         for (a, b) in poly1.iter().zip(poly2.iter()) {
             inner_product += *a * *b;
         }
 
-        // now we need to find the polynomial S(x)
+        // we need to find the polynomial S(x)
         // from the MERCURY paper: let's multiply f(x) * g(1/x) + f(1/x) * g(x) by x^d
         // what we get is a polynomial of degree at most 2d, but the coefficients are nicer:
         // (f0 + f1*x + f2*x^2 + ... + fd*x^d) * (gd + g{d-1}*x + ... + g0*x^d) +
@@ -87,11 +82,8 @@ impl<E: Pairing> InnerProductProof<E> {
 
         let s_commitment = kzg.commit(&s_poly.coeffs);
 
-        // start a new transcript
-        let mut transcript: Transcript = Transcript::new(b"inner_product_proof");
+        // incorporate the inner product and the commitment to S into the transcript
         let mut commitment_bytes = vec![];
-        comm1.serialize_compressed(&mut commitment_bytes).unwrap();
-        comm2.serialize_compressed(&mut commitment_bytes).unwrap();
         inner_product.serialize_compressed(&mut commitment_bytes).unwrap();
         s_commitment.serialize_compressed(&mut commitment_bytes).unwrap();
         transcript.append_message(&commitment_bytes);
@@ -117,8 +109,6 @@ impl<E: Pairing> InnerProductProof<E> {
         );
 
         return InnerProductProof {
-            comm1,
-            comm2,
             inner_product,
             s_comm: s_commitment,
             f_opening,
@@ -133,10 +123,8 @@ impl<E: Pairing> InnerProductProof<E> {
 
 
     /// Verify the inner product proof
-    pub fn verify(&self, kzg: &super::kzg::KZG<E>) -> bool {
+    pub fn verify(&self, comm1: &E::G1, comm2: &E::G1, kzg: &super::kzg::KZG<E>, transcript: &mut Transcript) -> bool {
         let InnerProductProof {
-            comm1,
-            comm2,
             inner_product,
             s_comm,
             f_opening,
@@ -160,10 +148,7 @@ impl<E: Pairing> InnerProductProof<E> {
         }
 
         // recompute the challenge r
-        let mut transcript: Transcript = Transcript::new(b"inner_product_proof");
         let mut commitment_bytes = vec![];
-        comm1.serialize_compressed(&mut commitment_bytes).unwrap();
-        comm2.serialize_compressed(&mut commitment_bytes).unwrap();
         inner_product.serialize_compressed(&mut commitment_bytes).unwrap();
         s_comm.serialize_compressed(&mut commitment_bytes).unwrap();
         transcript.append_message(&commitment_bytes);
@@ -192,15 +177,30 @@ mod tests {
 
         let kzg = kzg::KZG::<Bn254>::trusted_setup(4, &mut test_rng());
 
-        let proof = InnerProductProof::<Bn254>::prove(&poly1, &poly2, &kzg);
+        // --- PROVER ---
+        let mut transcript = &mut Transcript::new(b"inner_product_test");
+        let comm1 = kzg.commit(&poly1);
+        let comm2 = kzg.commit(&poly2);
+
+        let mut commitment_bytes = vec![];
+        comm1.serialize_compressed(&mut commitment_bytes).unwrap();
+        comm2.serialize_compressed(&mut commitment_bytes).unwrap();
+        transcript.append_message(&commitment_bytes);
+
+        let proof = InnerProductProof::<Bn254>::prove(&poly1, &poly2, &kzg, transcript);
         assert_eq!(proof.inner_product, Fr::from(32u64)); // 1*4 + 2*5 + 3*6 = 32
 
-        let is_valid = proof.verify(&kzg);
+        // --- VERIFIER ---
+        let mut verifier_transcript = &mut Transcript::new(b"inner_product_test");
+        let mut commitment_bytes = vec![];
+        comm1.serialize_compressed(&mut commitment_bytes).unwrap();
+        comm2.serialize_compressed(&mut commitment_bytes).unwrap();
+        verifier_transcript.append_message(&commitment_bytes);
+
+        let is_valid = proof.verify(&comm1, &comm2, &kzg, verifier_transcript);
         assert!(is_valid, "Inner product proof verification failed");
 
         let wrong_proof = InnerProductProof {
-            comm1: proof.comm1,
-            comm2: proof.comm2,
             inner_product: proof.inner_product + Fr::one(),
             s_comm: proof.s_comm,
             f_opening: proof.f_opening,
@@ -211,7 +211,7 @@ mod tests {
             s_opening_inv: proof.s_opening_inv,
         };
 
-        let is_valid = wrong_proof.verify(&kzg);
+        let is_valid = wrong_proof.verify(&comm1, &comm2, &kzg, verifier_transcript);
         assert!(!is_valid, "Inner product proof verification should have failed but didn't");
     }
 }
