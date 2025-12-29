@@ -178,7 +178,7 @@ mod tests {
         let kzg = kzg::KZG::<Bn254>::trusted_setup(4, &mut test_rng());
 
         // --- PROVER ---
-        let mut transcript = &mut Transcript::new(b"inner_product_test");
+        let mut transcript = Transcript::new(b"inner_product_test");
         let comm1 = kzg.commit(&poly1);
         let comm2 = kzg.commit(&poly2);
 
@@ -187,17 +187,17 @@ mod tests {
         comm2.serialize_compressed(&mut commitment_bytes).unwrap();
         transcript.append_message(&commitment_bytes);
 
-        let proof = InnerProductProof::<Bn254>::prove(&poly1, &poly2, &kzg, transcript);
+        let proof = InnerProductProof::<Bn254>::prove(&poly1, &poly2, &kzg, &mut transcript);
         assert_eq!(proof.inner_product, Fr::from(32u64)); // 1*4 + 2*5 + 3*6 = 32
 
         // --- VERIFIER ---
-        let mut verifier_transcript = &mut Transcript::new(b"inner_product_test");
+        let mut verifier_transcript = Transcript::new(b"inner_product_test");
         let mut commitment_bytes = vec![];
         comm1.serialize_compressed(&mut commitment_bytes).unwrap();
         comm2.serialize_compressed(&mut commitment_bytes).unwrap();
         verifier_transcript.append_message(&commitment_bytes);
 
-        let is_valid = proof.verify(&comm1, &comm2, &kzg, verifier_transcript);
+        let is_valid = proof.verify(&comm1, &comm2, &kzg, &mut verifier_transcript);
         assert!(is_valid, "Inner product proof verification failed");
 
         let wrong_proof = InnerProductProof {
@@ -211,7 +211,7 @@ mod tests {
             s_opening_inv: proof.s_opening_inv,
         };
 
-        let is_valid = wrong_proof.verify(&comm1, &comm2, &kzg, verifier_transcript);
+        let is_valid = wrong_proof.verify(&comm1, &comm2, &kzg, &mut verifier_transcript);
         assert!(!is_valid, "Inner product proof verification should have failed but didn't");
     }
 }
