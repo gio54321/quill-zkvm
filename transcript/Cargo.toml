@@ -1,0 +1,9 @@
+[package]
+name = "transcript"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+"blake3" = "1.8.2"
+"ark-std" = "0.5.0"
+"ark-ff" = "0.5.0"

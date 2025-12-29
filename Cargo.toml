@@ -1,5 +1,5 @@
 [workspace]
-members = ["pcs"]
+members = ["pcs", "transcript"]
 resolver = "2"
 
 [workspace.package]
