@@ -56,30 +56,8 @@ impl<E: Pairing> InnerProductProof<E> {
             inner_product += *a * *b;
         }
 
-        // we need to find the polynomial S(x)
-        // from the MERCURY paper: let's multiply f(x) * g(1/x) + f(1/x) * g(x) by x^d
-        // what we get is a polynomial of degree at most 2d, but the coefficients are nicer:
-        // (f0 + f1*x + f2*x^2 + ... + fd*x^d) * (gd + g{d-1}*x + ... + g0*x^d) +
-        // (fd + f{d-1}*x + ... + f0*x^d) * (g0 + g1*x + ... + gd*x^d)
-
-        let poly1 = DensePolynomial::from_coefficients_slice(poly1);
-        let poly2 = DensePolynomial::from_coefficients_slice(poly2);
-        let poly1_rev = DensePolynomial::from_coefficients_slice(&poly1.coeffs.iter().rev().cloned().collect::<Vec<_>>());
-        let poly2_rev = DensePolynomial::from_coefficients_slice(&poly2.coeffs.iter().rev().cloned().collect::<Vec<_>>());
-
-        //TODO: use FFTs here for efficiency, now we are doing naive multiplication which is O(n^2)
-        let h_poly = &(&poly1 * &poly2_rev) + &(&poly1_rev * &poly2);
-
-        // now, notice that the S(x) polynomial we want satisfies:
-        // h(x) = x^d (x * S(x) + 1/x * S(1/x) + 2*inner_product)
-        // therefore, h(x) is of a very special structure:
-        // h(x).coeffs = [s{d-1}, s{d-2}, ...,s1, s0, 2*inner_product, s0, s1, ..., s{d-2}, s{d-1}]
-
-        let h_coeffs = &h_poly.coeffs;
-        let s_coeffs = &h_coeffs[(h_coeffs.len() / 2 + 1)..];
-
-        let s_poly = DensePolynomial::from_coefficients_slice(s_coeffs);
-
+        // compute the S polynomial and its commitment
+        let s_poly = Self::compute_s_polynomial(poly1, poly2);
         let s_commitment = kzg.commit(&s_poly.coeffs);
 
         // incorporate the inner product and the commitment to S into the transcript
@@ -96,10 +74,10 @@ impl<E: Pairing> InnerProductProof<E> {
 
         // compute a bunch of openings
         // TODO: batch these 6 openings into 3 for efficiency
-        let f_opening = kzg.open(&poly1.coeffs, r);
-        let f_opening_inv = kzg.open(&poly1.coeffs, r_inv);
-        let g_opening = kzg.open(&poly2.coeffs, r);
-        let g_opening_inv = kzg.open(&poly2.coeffs, r_inv);
+        let f_opening = kzg.open(&poly1, r);
+        let f_opening_inv = kzg.open(&poly1, r_inv);
+        let g_opening = kzg.open(&poly2, r);
+        let g_opening_inv = kzg.open(&poly2, r_inv);
         let s_opening = kzg.open(&s_poly.coeffs, r);
         let s_opening_inv = kzg.open(&s_poly.coeffs, r_inv);
 
@@ -119,6 +97,29 @@ impl<E: Pairing> InnerProductProof<E> {
             s_opening_inv
         }
 
+    }
+
+    /// To compute the polynomial S(x) we need to compute `h(x) = f(x) * g(1/x) + f(1/x) * g(x)`
+    /// from the MERCURY paper: let's multiply f(x) * g(1/x) + f(1/x) * g(x) by x^d
+    /// what we get is a polynomial of degree at most 2d, but the coefficients are nicer:
+    /// (f0 + f1*x + f2*x^2 + ... + fd*x^d) * (gd + g{d-1}*x + ... + g0*x^d) +
+    /// (fd + f{d-1}*x + ... + f0*x^d) * (g0 + g1*x + ... + gd*x^d)e S(x) polynomial we want satisfies:
+    /// h(x) = x^d (x * S(x) + 1/x * S(1/x) + 2*inner_product)
+    /// therefore, h(x) is of a very special structure:
+    /// h(x).coeffs = [s{d-1}, s{d-2}, ...,s1, s0, 2*inner_product, s0, s1, ..., s{d-2}, s{d-1}]
+    pub fn compute_s_polynomial(poly1 : &[E::ScalarField], poly2: &[E::ScalarField]) -> DensePolynomial<E::ScalarField> {
+        let poly1 = DensePolynomial::from_coefficients_slice(poly1);
+        let poly2 = DensePolynomial::from_coefficients_slice(poly2);
+        let poly1_rev = DensePolynomial::from_coefficients_slice(&poly1.coeffs.iter().rev().cloned().collect::<Vec<_>>());
+        let poly2_rev = DensePolynomial::from_coefficients_slice(&poly2.coeffs.iter().rev().cloned().collect::<Vec<_>>());
+
+        //TODO: use FFTs here for efficiency, now we are doing naive multiplication which is O(n^2)
+        let h_poly = &(&poly1 * &poly2_rev) + &(&poly1_rev * &poly2);
+
+        let h_coeffs = &h_poly.coeffs;
+        let s_coeffs = &h_coeffs[(h_coeffs.len() / 2 + 1)..];
+
+        DensePolynomial::from_coefficients_slice(s_coeffs)
     }
 
 
