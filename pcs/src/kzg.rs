@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use ark_poly::{DenseUVPolynomial, Polynomial, polynomial};
+use ark_poly::{DenseUVPolynomial, Polynomial};
 use ark_poly::univariate::DensePolynomial;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;

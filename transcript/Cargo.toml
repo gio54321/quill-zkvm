@@ -1,5 +1,5 @@
 [package]
-name = "transcript"
+name = "quill_transcript"
 version.workspace = true
 edition.workspace = true
 
