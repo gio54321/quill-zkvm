@@ -90,13 +90,9 @@ impl<E: Pairing> MLEvalProof<E> {
         let s_commitment = kzg.commit(&s_poly.coeffs);
 
         // incorporate the evaluation point, claimed evaluation and the commitment to S into the transcript
-        let mut commitment_bytes = vec![];
-        eval_point.iter().for_each(|e| {
-            e.serialize_compressed(&mut commitment_bytes).unwrap();
-        });
-        evaluation.serialize_compressed(&mut commitment_bytes).unwrap();
-        s_commitment.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
+        transcript.append_serializable(&eval_point);
+        transcript.append_serializable(&evaluation);
+        transcript.append_serializable(&s_commitment);
 
         // draw random point r
         let r = transcript.draw_field_element::<E::ScalarField>();
@@ -123,13 +119,9 @@ impl<E: Pairing> MLEvalProof<E> {
 
     pub fn verify(&self, commitment: &E::G1, kzg: &super::kzg::KZG<E>, transcript: &mut Transcript) -> bool {
         // reconstruct the transcript state
-        let mut commitment_bytes = vec![];
-        self.evaluation_point.iter().for_each(|e| {
-            e.serialize_compressed(&mut commitment_bytes).unwrap();
-        });
-        self.evaluation.serialize_compressed(&mut commitment_bytes).unwrap();
-        self.s_comm.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
+        transcript.append_serializable(&self.evaluation_point);
+        transcript.append_serializable(&self.evaluation);
+        transcript.append_serializable(&self.s_comm);
 
         // draw random point r
         let r = transcript.draw_field_element::<E::ScalarField>();
@@ -199,9 +191,7 @@ mod tests {
 
         // commit to the polynomial
         let commitment = kzg.commit(&poly);
-        let mut commitment_bytes = vec![];
-        commitment.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
+        transcript.append_serializable(&commitment);
 
         //get a random evaluation point
         let eval_point: Vec<Fr> = (0..num_vars).map(|_| transcript.draw_field_element::<Fr>()).collect();
@@ -213,9 +203,7 @@ mod tests {
         let mut transcript = Transcript::new(b"MLPCS Test");
         // reconstruct the commitment in the transcript
 
-        let mut commitment_bytes = vec![];
-        commitment.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
+        transcript.append_serializable(&commitment);
 
         // get the evaluation point and claimed evaluation in the transcript
         let eval_point: Vec<Fr> = (0..num_vars).map(|_| transcript.draw_field_element::<Fr>()).collect();
@@ -238,10 +226,8 @@ mod tests {
         let mut transcript = Transcript::new(b"MLPCS Test");
         // reconstruct the commitment in the transcript
 
-        let mut commitment_bytes = vec![];
-        commitment.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
-
+        transcript.append_serializable(&commitment);
+        
         // get the evaluation point and claimed evaluation in the transcript
         let eval_point: Vec<Fr> = (0..num_vars).map(|_| transcript.draw_field_element::<Fr>()).collect();
 

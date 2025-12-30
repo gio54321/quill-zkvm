@@ -61,10 +61,8 @@ impl<E: Pairing> InnerProductProof<E> {
         let s_commitment = kzg.commit(&s_poly.coeffs);
 
         // incorporate the inner product and the commitment to S into the transcript
-        let mut commitment_bytes = vec![];
-        inner_product.serialize_compressed(&mut commitment_bytes).unwrap();
-        s_commitment.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
+        transcript.append_serializable(&inner_product);
+        transcript.append_serializable(&s_commitment);
 
         // draw random point r
         let r = transcript.draw_field_element::<E::ScalarField>();
@@ -149,10 +147,8 @@ impl<E: Pairing> InnerProductProof<E> {
         }
 
         // recompute the challenge r
-        let mut commitment_bytes = vec![];
-        inner_product.serialize_compressed(&mut commitment_bytes).unwrap();
-        s_comm.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
+        transcript.append_serializable(inner_product);
+        transcript.append_serializable(s_comm);
 
         let r = transcript.draw_field_element::<E::ScalarField>();
         let r_inv = r.inverse().unwrap();
@@ -183,21 +179,16 @@ mod tests {
         let comm1 = kzg.commit(&poly1);
         let comm2 = kzg.commit(&poly2);
 
-        let mut commitment_bytes = vec![];
-        comm1.serialize_compressed(&mut commitment_bytes).unwrap();
-        comm2.serialize_compressed(&mut commitment_bytes).unwrap();
-        transcript.append_message(&commitment_bytes);
+        transcript.append_serializable(&comm1);
+        transcript.append_serializable(&comm2);
 
         let proof = InnerProductProof::<Bn254>::prove(&poly1, &poly2, &kzg, &mut transcript);
         assert_eq!(proof.inner_product, Fr::from(32u64)); // 1*4 + 2*5 + 3*6 = 32
 
         // --- VERIFIER ---
         let mut verifier_transcript = Transcript::new(b"inner_product_test");
-        let mut commitment_bytes = vec![];
-        comm1.serialize_compressed(&mut commitment_bytes).unwrap();
-        comm2.serialize_compressed(&mut commitment_bytes).unwrap();
-        verifier_transcript.append_message(&commitment_bytes);
-
+        verifier_transcript.append_serializable(&comm1);
+        verifier_transcript.append_serializable(&comm2);
         let is_valid = proof.verify(&comm1, &comm2, &kzg, &mut verifier_transcript);
         assert!(is_valid, "Inner product proof verification failed");
 

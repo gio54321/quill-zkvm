@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalSerialize};
 use blake3::Hasher;
 
 pub struct Transcript {
@@ -21,12 +22,26 @@ impl Transcript {
     }
 
     /// Append a message to the transcript
-    pub fn append_message(&mut self, message: &[u8]) {
+    pub fn append_bytes(&mut self, message: &[u8]) {
         let mut hasher = Hasher::new();
         hasher.update(&self.state);
         hasher.update(message);
 
         self.state = hasher.finalize().as_bytes().to_vec();
+    }
+
+    pub fn append_serializable<T: CanonicalSerialize>(&mut self, obj: &T) {
+        let mut bytes = vec![];
+        obj.serialize_uncompressed(&mut bytes).unwrap();
+        self.append_bytes(&bytes);
+    }
+
+    pub fn append_serializables<T: CanonicalSerialize>(&mut self, objs: &[T]) {
+        let mut bytes = vec![];
+        for obj in objs {
+            obj.serialize_uncompressed(&mut bytes).unwrap();
+        }
+        self.append_bytes(&bytes);
     }
 
     /// Draw `n` bytes of challenge from the transcript
@@ -41,7 +56,7 @@ impl Transcript {
 
         // TODO: there are more efficient ways of incorporating
         // the challenge back into the transcript state.
-        self.append_message(&challenge);
+        self.append_bytes(&challenge);
 
         challenge
     }
@@ -52,7 +67,7 @@ impl Transcript {
     /// over the field (assuming that the bytes drawn by the transcript are uniform)
     /// by reducing a uniform integer that has at least field modulus bits + 128 bits.
     /// An alternative approach would be to use rejection sampling to get exact uniformity.
-    pub fn draw_field_element<F: ark_ff::PrimeField>(&mut self) -> F {
+    pub fn draw_field_element<F: PrimeField>(&mut self) -> F {
         let num_bytes = (F::MODULUS_BIT_SIZE + 128 + 7) / 8;
         let bytes = self.draw_challenge(num_bytes as usize);
         F::from_le_bytes_mod_order(&bytes)
