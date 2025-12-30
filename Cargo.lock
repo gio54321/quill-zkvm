@@ -371,6 +371,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill_hyperplonk"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-poly",
+ "ark-serialize",
+ "ark-std",
+ "quill_transcript",
+]
+
+[[package]]
 name = "quill_pcs"
 version = "0.1.0"
 dependencies = [
@@ -389,6 +402,7 @@ name = "quill_transcript"
 version = "0.1.0"
 dependencies = [
  "ark-ff",
+ "ark-serialize",
  "ark-std",
  "blake3",
 ]

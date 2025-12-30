@@ -1,5 +1,5 @@
 [workspace]
-members = ["pcs", "transcript"]
+members = ["hyperplonk","pcs", "transcript"]
 resolver = "2"
 
 [workspace.package]
