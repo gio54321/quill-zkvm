@@ -102,12 +102,13 @@ impl<E: Pairing> KZG<E> {
     }
 }
 
-
+#[cfg(test)]
 mod tests {
-    use super::*;
     use ark_bn254::Bn254;
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use crate::kzg::{KZG, KZGOpeningProof};
+    use ark_std::One;
 
     #[test]
     fn test_kzg() {

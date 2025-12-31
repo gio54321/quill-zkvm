@@ -1,7 +1,7 @@
 use ark_ff::fields::PrimeField;
 use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
 use quill_transcript::transcript::Transcript;
-use ark_std::{Zero, One};
+use ark_std::{Zero};
 use ark_poly::{Polynomial};
 
 /// A sumcheck proof for a function h(g_1(x), ..., g_k(x))
@@ -17,7 +17,7 @@ pub struct SumcheckProof<F: PrimeField> {
     pub evaluation_claim : F
 }
 
-impl<F: PrimeField> SumcheckProof<F> {    
+impl<F: PrimeField> SumcheckProof<F> {
     /// General sumcheck prover for a function of the form h(g_1(x), ..., g_k(x))
     /// where each g_i is a multilinear polynomial in n variables, represented
     /// as a vector of evaluations over {0,1}^n, and h is a function F^k -> F
@@ -155,13 +155,9 @@ impl<F: PrimeField> SumcheckProof<F> {
 
 #[cfg(test)]
 mod tests {
-    use std::result;
-
     use super::*;
-    use ark_bn254::Bn254;
     use ark_bn254::Fr;
-    use ark_ff::UniformRand;
-    use ark_std::test_rng;
+    use ark_std::One;
 
     #[test]
     fn test_sumcheck_proof() {
@@ -204,7 +200,5 @@ mod tests {
             Fr::from(3u64) * proof.evaluation_point[2];
         
         assert_eq!(proof.evaluation_claim, g1_at_r, "Evaluation claim should match g1 at the evaluation point");
-
-        
     }
 }

@@ -1,10 +1,9 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
-use ark_std::{Zero, One};
+use ark_std::{Zero};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial, Polynomial};
+use ark_poly::{DenseUVPolynomial};
 use quill_transcript::transcript::Transcript;
-use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
 use crate::kzg::KZGOpeningProof;
 
@@ -166,6 +165,7 @@ mod tests {
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use crate::kzg;
+    use ark_std::One;
 
     #[test]
     fn test_inner_product_proof() {

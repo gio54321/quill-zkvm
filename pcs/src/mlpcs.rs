@@ -2,9 +2,8 @@ use ark_ec::pairing::Pairing;
 use ark_ff::Field;
 use ark_std::{Zero, One};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial, Polynomial};
+use ark_poly::{DenseUVPolynomial};
 use quill_transcript::transcript::Transcript;
-use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
 
 use crate::ipa::InnerProductProof;
@@ -227,7 +226,7 @@ mod tests {
         // reconstruct the commitment in the transcript
 
         transcript.append_serializable(&commitment);
-        
+
         // get the evaluation point and claimed evaluation in the transcript
         let eval_point: Vec<Fr> = (0..num_vars).map(|_| transcript.draw_field_element::<Fr>()).collect();
 
