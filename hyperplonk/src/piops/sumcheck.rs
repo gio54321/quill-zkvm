@@ -4,13 +4,20 @@ use quill_transcript::transcript::Transcript;
 use ark_std::{Zero, One};
 use ark_poly::{Polynomial};
 
+/// A sumcheck proof for a function h(g_1(x), ..., g_k(x))
+/// Reduces checking the sum over {0,1}^n of h(g_1(x), ..., g_k(x))
+/// to checking the evaluations of that expression at a random point.
+/// 
+/// NOTE: the evaluation claim has to be checked separately
 pub struct SumcheckProof<F: PrimeField> {
     pub num_vars: usize,
     pub claimed_sum: F,
     pub r_polys: Vec<DensePolynomial<F>>,
+    pub evaluation_point: Vec<F>,
+    pub evaluation_claim : F
 }
 
-impl<F: PrimeField> SumcheckProof<F> {
+impl<F: PrimeField> SumcheckProof<F> {    
     /// General sumcheck prover for a function of the form h(g_1(x), ..., g_k(x))
     /// where each g_i is a multilinear polynomial in n variables, represented
     /// as a vector of evaluations over {0,1}^n, and h is a function F^k -> F
@@ -44,14 +51,14 @@ impl<F: PrimeField> SumcheckProof<F> {
             claimed_sum += h_eval.evaluate(&F::zero());
         }
 
-        println!("claimed_sum: {:?}", claimed_sum);
-
         transcript.append_serializable(&num_vars);
         transcript.append_serializable(&claimed_sum);
 
         let mut output_r_polys : Vec<DensePolynomial<F>> = Vec::with_capacity(gs.len());
+        let mut evaluation_point : Vec<F> = Vec::with_capacity(num_vars);
 
-        for i in (0..num_vars-1).rev() {
+        for i in (0..num_vars).rev() {
+            println!("Sumcheck round {}", i);
             let mut r_polys : Vec<Vec<DensePolynomial<F>>> = Vec::with_capacity(gs.len());
             for g in &gs_local {
                 let mut r_polys_i = Vec::with_capacity(1 << i);
@@ -87,6 +94,7 @@ impl<F: PrimeField> SumcheckProof<F> {
 
             // draw a random challenge
             let r = transcript.draw_field_element::<F>();
+            evaluation_point.push(r);
 
             // update gs_local to be the evaluations of r_polys at r
             let mut new_gs_local = Vec::with_capacity(gs_local.len());
@@ -101,12 +109,47 @@ impl<F: PrimeField> SumcheckProof<F> {
 
             gs_local = new_gs_local;
         }
+
+        // after all rounds, gs_local should have one element with one evaluation
+        let evaluation_claim = gs_local[0][0];
         
         Self {
             num_vars: num_vars,
             claimed_sum: claimed_sum,
             r_polys: output_r_polys,
+            evaluation_point,
+            evaluation_claim
         }
+    }
+
+    pub fn verify(&self, transcript: &mut Transcript) -> bool {
+        // reconstruct the transcript state
+        transcript.append_serializable(&self.num_vars);
+        transcript.append_serializable(&self.claimed_sum);
+
+        let mut v = self.claimed_sum;
+
+        for r_poly in &self.r_polys {
+            // get the polynomial from the transcript
+            let transcript_poly: DensePolynomial<F> = r_poly.clone();
+            transcript.append_serializable(&transcript_poly);
+
+            // check that r(0) + r(1) == v
+            let eval_at_0 = transcript_poly.evaluate(&F::zero());
+            let eval_at_1 = transcript_poly.evaluate(&F::one());
+            if eval_at_0 + eval_at_1 != v {
+                return false;
+            }
+
+            // draw the random challenge
+            let r = transcript.draw_field_element::<F>();
+
+            // evaluate current_sum_poly at r
+            v = transcript_poly.evaluate(&r);
+        }
+
+        // finally, check that the evaluation claim matches h(g_1(r), ..., g_k(r))
+        v == self.evaluation_claim
     }
 }
 
@@ -123,7 +166,6 @@ mod tests {
     #[test]
     fn test_sumcheck_proof() {
         let num_vars = 3;
-        let mut rng = test_rng();
         // define g_1(x1,x2,x3) = x1 + 2*x2 + 3*x3
         let g1_evals : Vec<Fr> = (0..(1 << num_vars))
             .map(|i| {
@@ -149,5 +191,20 @@ mod tests {
             },
             &mut Transcript::new(b"sumcheck_test"),
         );
+
+        let is_valid = proof.verify(
+            &mut Transcript::new(b"sumcheck_test"),
+        );
+
+        assert!(is_valid, "Sumcheck proof should be valid");
+
+        // check manually the evaluation claim
+        let g1_at_r : Fr = proof.evaluation_point[0] + 
+            Fr::from(2u64)* proof.evaluation_point[1] +
+            Fr::from(3u64) * proof.evaluation_point[2];
+        
+        assert_eq!(proof.evaluation_claim, g1_at_r, "Evaluation claim should match g1 at the evaluation point");
+
+        
     }
 }
