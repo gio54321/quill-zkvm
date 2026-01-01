@@ -116,6 +116,21 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         }
     }
 
+    pub fn from_poly_evals(num_vars: usize, poly_evals: Vec<F>) -> (Self, VirtualPolynomialInputRef) {
+        assert_eq!(poly_evals.len(), 1 << num_vars, "Input polynomial evaluations length does not match number of variables");
+        let vp = VirtualPolynomial {
+            num_vars,
+            polynomials: vec![poly_evals],
+            expr: VirtualPolyExpr::Input(0),
+        };
+        let vref = VirtualPolynomialInputRef { index: 0 };
+        (vp, vref)
+    }
+
+    pub fn set_expr(&mut self, expr: VirtualPolyExpr<F>) {
+        self.expr = expr;
+    }
+
     /// Allocate a new input polynomial represented by its evaluations over {0,1}^n
     /// and return a reference to it
     pub fn allocate_input_mle(&mut self, poly_evals: Vec<F>) -> VirtualPolynomialInputRef {
@@ -147,12 +162,12 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// and performing polynomial addition and naive multiplication, which is quadratic in the
     /// degree of the polynomials. Therefore, this currently takes O(d^2 * depth) where
     /// d is the degree of h.
-    pub fn evaluate_poly(&self, g_polys : Vec<DensePolynomial<F>>) -> DensePolynomial<F> {
+    pub fn evaluate_poly(&self, g_polys: &Vec<DensePolynomial<F>>) -> DensePolynomial<F> {
         assert_eq!(g_polys.len(), self.polynomials.len(), "Incorrect number of input polynomials provided for evaluation");
         self.evaluate_expr_poly(&self.expr, &g_polys)
     }
 
-    pub fn evaluate_expr_poly(&self, expr: &VirtualPolyExpr<F>, g_polys: &Vec<DensePolynomial<F>>) -> DensePolynomial<F> {
+    fn evaluate_expr_poly(&self, expr: &VirtualPolyExpr<F>, g_polys: &Vec<DensePolynomial<F>>) -> DensePolynomial<F> {
         match expr {
             VirtualPolyExpr::Input(i) => {
                 g_polys[*i].clone()
@@ -175,12 +190,12 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     }
 
     /// Evaluate the virtual polynomial over the 
-    pub fn evaluate_point(&self, g_evals: Vec<F>) -> F {
+    pub fn evaluate_point(&self, g_evals: &Vec<F>) -> F {
         assert_eq!(g_evals.len(), self.polynomials.len(), "Incorrect number of input polynomial evaluations provided for evaluation");
         self.evaluate_expr(&self.expr, g_evals)
     }
 
-    pub fn evaluate_expr(&self, expr: &VirtualPolyExpr<F>, g_evals: Vec<F>) -> F {
+    fn evaluate_expr(&self, expr: &VirtualPolyExpr<F>, g_evals: &Vec<F>) -> F {
         match expr {
             VirtualPolyExpr::Input(i) => {
                 g_evals[*i]
@@ -189,13 +204,13 @@ impl<F: PrimeField> VirtualPolynomial<F> {
                 *c
             },
             VirtualPolyExpr::Add(left, right) => {
-                let left_val = self.evaluate_expr(left, g_evals.clone());
-                let right_val = self.evaluate_expr(right, g_evals);
+                let left_val = self.evaluate_expr(left, &g_evals);
+                let right_val = self.evaluate_expr(right, &g_evals);
                 left_val + right_val
             },
             VirtualPolyExpr::Mul(left, right) => {
-                let left_val = self.evaluate_expr(left, g_evals.clone());
-                let right_val = self.evaluate_expr(right, g_evals);
+                let left_val = self.evaluate_expr(left, &g_evals);
+                let right_val = self.evaluate_expr(right, &g_evals);
                 left_val * right_val
             },
         }
