@@ -6,8 +6,9 @@ use ark_poly::{DenseUVPolynomial};
 use quill_transcript::transcript::Transcript;
 use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
 
+use crate::MultilinearPCS;
 use crate::ipa::InnerProductProof;
-use crate::kzg::KZGOpeningProof;
+use crate::kzg::{KZG, KZGOpeningProof};
 
 /// A proof for the evaluation of a multilinear polynomial committed using KZG.
 /// The polynomial is assumed to be committed using a univariate polynomial that
@@ -145,6 +146,27 @@ impl<E: Pairing> MLEvalProof<E> {
             E::ScalarField::from(2u64) * self.evaluation;
         
         lhs == rhs
+    }
+}
+
+
+impl<E: Pairing> MultilinearPCS<E::ScalarField> for MLEvalProof<E> {
+    type CRS = KZG<E>;
+    type Commitment = E::G1;
+    type Proof = MLEvalProof<E>;
+
+    fn trusted_setup(degree: usize) -> Self::CRS {
+        let mut rng = rand::thread_rng();
+        KZG::<E>::trusted_setup(degree, &mut rng)
+    }
+    fn commit(&self, crs: &Self::CRS, poly: &[E::ScalarField]) -> Self::Commitment {
+        crs.commit(poly)
+    }
+    fn open(&self, crs: &Self::CRS, poly: &[E::ScalarField], eval_point: &[E::ScalarField], transcript: &mut Transcript) -> Self::Proof {
+        MLEvalProof::prove(poly, eval_point, crs, transcript)
+    }
+    fn verify(&self, crs: &Self::CRS, commitment: &Self::Commitment, proof: &Self::Proof, transcript: &mut Transcript) -> bool {
+        proof.verify(commitment, crs, transcript)
     }
 }
 
