@@ -3,7 +3,7 @@ use ark_ff::fields::PrimeField;
 /// Evaluate eq(x, r) = prod_{i=1}^n (x_i * r_i + (1 - x_i) * (1 - r_i))
 /// for every point in {0,1}^n
 /// This function takes linear O(2^n) time
-pub fn fast_eq_eval<F: PrimeField>(
+pub fn fast_eq_eval_hypercube<F: PrimeField>(
     n : usize,
     point: &[F],
 ) -> Vec<F> {
@@ -33,7 +33,20 @@ pub fn fast_eq_eval<F: PrimeField>(
     evals
 }
 
+pub fn eq_eval<F: PrimeField>(
+    x: &[F],
+    r: &[F],
+) -> F {
+    assert_eq!(x.len(), r.len());
+    let n = x.len();
 
+    let mut result = F::one();
+    for i in 0..n {
+        let term = x[i] * r[i] + (F::one() - x[i]) * (F::one() - r[i]);
+        result *= term;
+    }
+    result
+}
 
 #[cfg(test)]
 mod tests {
@@ -48,7 +61,7 @@ mod tests {
         let n = 5;
         let mut rng = test_rng();
         let point = (0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<Fr>>();
-        let evals = fast_eq_eval(n, &point);
+        let evals = fast_eq_eval_hypercube(n, &point);
 
         // verify correctness naively
         for i in 0..(1 << n) {

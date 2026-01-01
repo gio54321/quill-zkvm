@@ -84,6 +84,7 @@ impl<F: PrimeField> One for VirtualPolyExpr<F> {
 /// over the hypercube {0,1}^n. For example, when multiplying n polynomials together, the
 /// expression should be constructed as a balanced binary tree of multiplications to ensure
 /// logarithmic depth, rather than a linear chain of multiplications.
+#[derive(Clone, Debug)]
 pub struct VirtualPolynomial<F: PrimeField> {
     /// Number of variables of the input polynomials
     pub num_vars: usize,
