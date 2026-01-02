@@ -1,33 +1,33 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
-use ark_std::{Zero, One};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial};
+use ark_poly::DenseUVPolynomial;
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+use ark_std::{One, Zero};
 use quill_transcript::transcript::Transcript;
-use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
 
-use crate::{MultilinearPCS, MultilinearPCSProof};
 use crate::ipa::InnerProductProof;
-use crate::kzg::{KZG, KZGOpeningProof};
+use crate::kzg::{KZGOpeningProof, KZG};
+use crate::{MultilinearPCS, MultilinearPCSProof};
 
 /// A proof for the evaluation of a multilinear polynomial committed using KZG.
 /// The polynomial is assumed to be committed using a univariate polynomial that
 /// encodes in its coefficients the evaluations of the multilinear polynomial at all points over
 /// the hypercube {0,1}^n, that is
-/// 
+///
 /// > f(x) = P(bin(0)) + P(bin(1)) * x + P(bin(2)) * x^2 + ... + P(bin(2^n-1)) * x^(2^n-1)
-/// 
+///
 /// To prove that `v` is the evaluation of the multilinear polynomial `P` at point `[r0, r1, ..., rn]`
 /// the prover proves the following inner product claim:
-/// 
+///
 /// > v = P(bin(0)) * eq(bin(0), r) + P(bin(1)) * eq(bin(1), r) + ... + P(bin(2^n-1)) * eq(bin(2^n-1), r)
-/// 
+///
 /// where `eq(bin(i), r)` is the multilinear polynomial that evaluates to 1 at point `bin(i)` and to 0 at all other points
 /// over the hypercube. This is exactly proving the inner product of the coefficients of the polynomial `f(x)` and the coefficients
 /// of the polynomial
-/// 
+///
 /// > P_r(x) = eq(bin(0), r) + eq(bin(1), r) * x + eq(bin(2), r) * x^2 + ... + eq(bin(2^n-1), r) * x^(2^n-1)
-/// 
+///
 /// Evaluations of `P_r(x)` can be computed efficiently in O(n) time without constructing the full polynomial.
 pub struct MLEvalProof<E: Pairing> {
     /// The evaluation point
@@ -37,20 +37,19 @@ pub struct MLEvalProof<E: Pairing> {
     /// Commitment to the S polynomial
     pub s_comm: E::G1,
     // Opening proofs
-    pub poly_opening : KZGOpeningProof<E>,
-    pub poly_opening_inv : KZGOpeningProof<E>,
-    pub s_opening : KZGOpeningProof<E>,
-    pub s_opening_inv : KZGOpeningProof<E>,
+    pub poly_opening: KZGOpeningProof<E>,
+    pub poly_opening_inv: KZGOpeningProof<E>,
+    pub s_opening: KZGOpeningProof<E>,
+    pub s_opening_inv: KZGOpeningProof<E>,
 }
 
 impl<E: Pairing> MLEvalProof<E> {
-
     /// Evaluate P_r at a given evaluation point using the formula
-    /// 
+    ///
     /// > P_r(x) = \prod_{i=0}^{n-1} (r_i * x^{2^i} + 1 - r_i)
-    /// 
+    ///
     /// this takes O(n) time
-    fn eval_pr(r : &[E::ScalarField], x: E::ScalarField) -> E::ScalarField {
+    fn eval_pr(r: &[E::ScalarField], x: E::ScalarField) -> E::ScalarField {
         let n = r.len();
 
         let mut result = E::ScalarField::one();
@@ -66,19 +65,27 @@ impl<E: Pairing> MLEvalProof<E> {
     /// Compute the polynomial P_r(x) given the evaluation point r as bits. This evaluates P_r(x) on n
     /// points and then interpolates to get the coefficients using IFFT.
     /// This takes O(n * 2^n) time (assuming that the field is suitable for FFTs)
-    pub fn compute_pr(r : &[E::ScalarField]) -> DensePolynomial<E::ScalarField> {
-        let n : usize = r.len();
+    pub fn compute_pr(r: &[E::ScalarField]) -> DensePolynomial<E::ScalarField> {
+        let n: usize = r.len();
         let domain_size = 1 << n;
         let domain = GeneralEvaluationDomain::<E::ScalarField>::new(domain_size).unwrap();
-        let evals = domain.elements().map(|x| Self::eval_pr(r, x)).collect::<Vec<_>>();
+        let evals = domain
+            .elements()
+            .map(|x| Self::eval_pr(r, x))
+            .collect::<Vec<_>>();
         let pr_poly_coeffs = domain.ifft(&evals);
         DensePolynomial::from_coefficients_slice(&pr_poly_coeffs)
     }
 
     /// Prove the evaluation of a multilinear polynomial
-    /// 
+    ///
     /// ASSUMES: the commitment to the polynomial has been already incorporated into the transcript
-    pub fn prove(poly : &[E::ScalarField], eval_point: &[E::ScalarField], kzg: &super::kzg::KZG<E>, transcript: &mut Transcript) -> Self {
+    pub fn prove(
+        poly: &[E::ScalarField],
+        eval_point: &[E::ScalarField],
+        kzg: &super::kzg::KZG<E>,
+        transcript: &mut Transcript,
+    ) -> Self {
         // the first thing to do is to evaluate the polynomial at the given point
         let pr = Self::compute_pr(eval_point);
         let mut evaluation = E::ScalarField::zero();
@@ -113,11 +120,15 @@ impl<E: Pairing> MLEvalProof<E> {
             poly_opening_inv,
             s_opening,
             s_opening_inv,
-        } 
+        }
     }
 
-
-    pub fn verify(&self, commitment: &E::G1, kzg: &super::kzg::KZG<E>, transcript: &mut Transcript) -> bool {
+    pub fn verify(
+        &self,
+        commitment: &E::G1,
+        kzg: &super::kzg::KZG<E>,
+        transcript: &mut Transcript,
+    ) -> bool {
         // reconstruct the transcript state
         transcript.append_serializable(&self.evaluation_point);
         transcript.append_serializable(&self.evaluation);
@@ -142,13 +153,13 @@ impl<E: Pairing> MLEvalProof<E> {
         let pr_r_inv = Self::eval_pr(&self.evaluation_point, r_inv);
 
         let lhs = self.poly_opening.y * pr_r_inv + self.poly_opening_inv.y * pr_r;
-        let rhs = r * self.s_opening.y + r_inv * self.s_opening_inv.y + 
-            E::ScalarField::from(2u64) * self.evaluation;
-        
+        let rhs = r * self.s_opening.y
+            + r_inv * self.s_opening_inv.y
+            + E::ScalarField::from(2u64) * self.evaluation;
+
         lhs == rhs
     }
 }
-
 
 impl<E: Pairing> MultilinearPCSProof<E::ScalarField> for MLEvalProof<E> {
     fn evaluation_point(&self) -> Vec<E::ScalarField> {
@@ -172,23 +183,32 @@ impl<E: Pairing> MultilinearPCS<E::ScalarField> for KZG<E> {
     fn commit(&self, poly: &[E::ScalarField]) -> Self::Commitment {
         self.commit(poly)
     }
-    fn open(&self, poly: &[E::ScalarField], eval_point: &[E::ScalarField], transcript: &mut Transcript) -> Self::Proof {
+    fn open(
+        &self,
+        poly: &[E::ScalarField],
+        eval_point: &[E::ScalarField],
+        transcript: &mut Transcript,
+    ) -> Self::Proof {
         MLEvalProof::prove(poly, eval_point, self, transcript)
     }
-    fn verify(&self, commitment: &Self::Commitment, proof: &Self::Proof, transcript: &mut Transcript) -> bool {
+    fn verify(
+        &self,
+        commitment: &Self::Commitment,
+        proof: &Self::Proof,
+        transcript: &mut Transcript,
+    ) -> bool {
         proof.verify(commitment, self, transcript)
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kzg;
     use ark_bn254::Bn254;
     use ark_bn254::Fr;
     use ark_ff::UniformRand;
     use ark_std::test_rng;
-    use crate::kzg;
 
     #[test]
     fn test_pr_computation() {
@@ -202,7 +222,17 @@ mod tests {
         let r1 = vec![Fr::one(), Fr::zero(), Fr::one()];
         let pr1_poly = MLEvalProof::<Bn254>::compute_pr(&r1);
         println!("P_r1(x) coeffs: {:?}", pr1_poly.coeffs);
-        assert_eq!(pr1_poly.coeffs, vec![Fr::zero(), Fr::zero(), Fr::zero(), Fr::zero(), Fr::zero(), Fr::one()]); // P_r1(x) = x^5
+        assert_eq!(
+            pr1_poly.coeffs,
+            vec![
+                Fr::zero(),
+                Fr::zero(),
+                Fr::zero(),
+                Fr::zero(),
+                Fr::zero(),
+                Fr::one()
+            ]
+        ); // P_r1(x) = x^5
     }
 
     #[test]
@@ -225,7 +255,9 @@ mod tests {
         transcript.append_serializable(&commitment);
 
         //get a random evaluation point
-        let eval_point: Vec<Fr> = (0..num_vars).map(|_| transcript.draw_field_element::<Fr>()).collect();
+        let eval_point: Vec<Fr> = (0..num_vars)
+            .map(|_| transcript.draw_field_element::<Fr>())
+            .collect();
 
         // prove
         let proof = MLEvalProof::<Bn254>::prove(&poly, &eval_point, &kzg, &mut transcript);
@@ -237,11 +269,15 @@ mod tests {
         transcript.append_serializable(&commitment);
 
         // get the evaluation point and claimed evaluation in the transcript
-        let eval_point: Vec<Fr> = (0..num_vars).map(|_| transcript.draw_field_element::<Fr>()).collect();
+        let eval_point: Vec<Fr> = (0..num_vars)
+            .map(|_| transcript.draw_field_element::<Fr>())
+            .collect();
 
-        assert!(eval_point == proof.evaluation_point, "Evaluation points do not match");
+        assert!(
+            eval_point == proof.evaluation_point,
+            "Evaluation points do not match"
+        );
         assert!(proof.verify(&commitment, &kzg, &mut transcript));
-
 
         // --- VERIFIER (wrong proof) ---
 
@@ -260,9 +296,14 @@ mod tests {
         transcript.append_serializable(&commitment);
 
         // get the evaluation point and claimed evaluation in the transcript
-        let eval_point: Vec<Fr> = (0..num_vars).map(|_| transcript.draw_field_element::<Fr>()).collect();
+        let eval_point: Vec<Fr> = (0..num_vars)
+            .map(|_| transcript.draw_field_element::<Fr>())
+            .collect();
 
-        assert!(eval_point == proof.evaluation_point, "Evaluation points do not match");
+        assert!(
+            eval_point == proof.evaluation_point,
+            "Evaluation points do not match"
+        );
         assert!(!wrong_proof.verify(&commitment, &kzg, &mut transcript));
     }
 }

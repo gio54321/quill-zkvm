@@ -1,21 +1,20 @@
+use ark_ec::pairing::Pairing;
+use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_ff::Field;
-use ark_poly::{DenseUVPolynomial, Polynomial};
 use ark_poly::univariate::DensePolynomial;
+use ark_poly::{DenseUVPolynomial, Polynomial};
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
-use ark_ec::pairing::Pairing;
-use ark_std::{Zero, One};
-use ark_ec::{CurveGroup, VariableBaseMSM};
-
+use ark_std::{One, Zero};
 
 pub struct KZG<E: Pairing> {
     /// Maximum degree of polynomials supported
     pub max_degree: usize,
 
     /// Generator point for G1
-    pub g1 : E::G1,
+    pub g1: E::G1,
     /// Generator point for G2
-    pub g2 : E::G2,
+    pub g2: E::G2,
 
     /// Powers of tau in G1: `g1, g1^tau, g1^{tau^2}, ..., g1^{tau^max_degree}`
     pub g1_points: Vec<E::G1>,
@@ -56,28 +55,32 @@ impl<E: Pairing> KZG<E> {
             g2: g2_generator,
             g1_points,
             g2_points,
-        }        
+        }
     }
 
     pub fn commit(&self, polynomial: &[E::ScalarField]) -> E::G1 {
-        assert!(polynomial.len() <= self.max_degree + 1, "Polynomial degree exceeds max degree");
+        assert!(
+            polynomial.len() <= self.max_degree + 1,
+            "Polynomial degree exceeds max degree"
+        );
 
-        let g1_points_affine = self.g1_points.iter().map(|p| p.into_affine()).collect::<Vec<_>>();
-        E::G1::msm_unchecked(
-            &g1_points_affine,
-            polynomial,
-        )
+        let g1_points_affine = self
+            .g1_points
+            .iter()
+            .map(|p| p.into_affine())
+            .collect::<Vec<_>>();
+        E::G1::msm_unchecked(&g1_points_affine, polynomial)
     }
 
     pub fn open(&self, polynomial: &[E::ScalarField], x: E::ScalarField) -> KZGOpeningProof<E> {
         // y = compute p(X)
         let poly = DensePolynomial::from_coefficients_slice(polynomial);
         let y = poly.evaluate(&x);
-        
+
         // compute q(X) = (p(X) - y) / (X - x)
         let numerator = &poly - &DensePolynomial::from_coefficients_slice(&[y]);
-        let denominator = DensePolynomial::from_coefficients_slice(&[-x, E::ScalarField::one()]); 
-        
+        let denominator = DensePolynomial::from_coefficients_slice(&[-x, E::ScalarField::one()]);
+
         let q = &numerator / &denominator;
         assert!(&q * &denominator == numerator, "Polynomial division failed");
 
@@ -93,7 +96,7 @@ impl<E: Pairing> KZG<E> {
     }
 
     pub fn verify(&self, commitment: &E::G1, proof: &KZGOpeningProof<E>) -> bool {
-        let KZGOpeningProof {x, y, proof} = proof;
+        let KZGOpeningProof { x, y, proof } = proof;
 
         // verify that q(tau) * (tau - x) = p(tau) - y
         // by verifying the pairing equation e(C - y*G1, G2) = e(proof, G2 * x + G2[0])
@@ -107,10 +110,10 @@ impl<E: Pairing> KZG<E> {
 
 #[cfg(test)]
 mod tests {
+    use crate::kzg::{KZGOpeningProof, KZG};
     use ark_bn254::Bn254;
     use ark_bn254::Fr;
     use ark_std::test_rng;
-    use crate::kzg::{KZG, KZGOpeningProof};
     use ark_std::One;
 
     #[test]
@@ -122,11 +125,7 @@ mod tests {
         println!("{:?}", kzg.g1_points);
 
         // p(x) = 2 + 1*x + 3*x^2
-        let poly_coeffs = vec![
-            Fr::from(2u64),
-            Fr::from(1u64),
-            Fr::from(3u64),
-        ];
+        let poly_coeffs = vec![Fr::from(2u64), Fr::from(1u64), Fr::from(3u64)];
 
         let commitment = kzg.commit(&poly_coeffs);
 
@@ -138,7 +137,6 @@ mod tests {
         let is_valid = kzg.verify(&commitment, &proof);
         assert!(is_valid, "KZG proof verification failed");
 
-
         let wrong_proof = KZGOpeningProof {
             x: proof.x,
             y: proof.y + Fr::one(),
@@ -146,6 +144,9 @@ mod tests {
         };
 
         let is_valid = kzg.verify(&commitment, &wrong_proof);
-        assert!(!is_valid, "KZG proof verification should have failed but didn't");
+        assert!(
+            !is_valid,
+            "KZG proof verification should have failed but didn't"
+        );
     }
 }

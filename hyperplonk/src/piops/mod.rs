@@ -1,9 +1,8 @@
 use ark_ff::PrimeField;
 
+pub mod multiset_check;
 pub mod sumcheck;
 pub mod zerocheck;
-pub mod multiset_check;
-
 
 #[derive(Debug, Clone)]
 pub struct EvaluationClaim<F: PrimeField> {

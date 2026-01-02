@@ -1,9 +1,11 @@
-use ark_ff::PrimeField;
-use quill_transcript::transcript::Transcript;
-use crate::{piops::{EvaluationClaim, sumcheck::SumcheckProof, zerocheck::ZeroCheckProof}};
+use crate::piops::{sumcheck::SumcheckProof, EvaluationClaim};
 use crate::utils::eq_eval::{eq_eval, fast_eq_eval_hypercube};
+use crate::utils::virtual_polynomial::{
+    VirtualPolyExpr, VirtualPolynomialRef, VirtualPolynomialStore,
+};
+use ark_ff::PrimeField;
 use quill_pcs::{MultilinearPCS, MultilinearPCSProof};
-use crate::utils::virtual_polynomial::{VirtualPolynomialStore, VirtualPolynomialRef, VirtualPolyExpr};
+use quill_transcript::transcript::Transcript;
 
 pub struct MultisetEqualityProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub denom_left_commitment: PCS::Commitment,
@@ -13,7 +15,7 @@ pub struct MultisetEqualityProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub opening_proof_denom_right: PCS::Proof,
 }
 
-impl<F: PrimeField, PCS:MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
+impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
     /// Returns the proof and the evaluation point for left and right h
     pub fn prove(
         store: &mut VirtualPolynomialStore<F>,
@@ -27,18 +29,26 @@ impl<F: PrimeField, PCS:MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         // use Logup to prove multiset equality via two sumchecks
         let logup_eval_point = transcript.draw_field_element::<F>();
 
-        // compute the evaluations of 1 / (eval_point + h_left(x)) and 1 / (eval_point + h_right(x)) 
+        // compute the evaluations of 1 / (eval_point + h_left(x)) and 1 / (eval_point + h_right(x))
         let log_derivative_left_evals = (0..(1 << num_vars))
             .map(|i| {
-                let g_evals = store.polynomials.iter().map(|poly| poly.evaluations[i]).collect::<Vec<F>>();
+                let g_evals = store
+                    .polynomials
+                    .iter()
+                    .map(|poly| poly.evaluations[i])
+                    .collect::<Vec<F>>();
                 let h_left_eval = store.evaluate_point(&g_evals, h_left);
                 (logup_eval_point + h_left_eval).inverse().unwrap()
             })
             .collect::<Vec<F>>();
-        
+
         let log_derivative_right_evals = (0..(1 << num_vars))
             .map(|i| {
-                let g_evals = store.polynomials.iter().map(|poly| poly.evaluations[i]).collect::<Vec<F>>();
+                let g_evals = store
+                    .polynomials
+                    .iter()
+                    .map(|poly| poly.evaluations[i])
+                    .collect::<Vec<F>>();
                 let h_right_eval = store.evaluate_point(&g_evals, h_right);
                 (logup_eval_point + h_right_eval).inverse().unwrap()
             })
@@ -64,21 +74,28 @@ impl<F: PrimeField, PCS:MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         //
         // Moreover, we need to prove that the sum of the two log derivatives is zero
         // we do this batching the two sumchecks into a single sumcheck
-        // 
-        // \sum_{x in B_n} : 
+        //
+        // \sum_{x in B_n} :
         // [denom_left(x) * (eval_point + h_left(x)) - 1 +
         // lambda * (denom_right(x) * (eval_point + h_right(x)) - 1)] * eq(x, z) * alpha
         // + denom_left(x) - denom_right(x) = 0
         // TODO: (1) need a better interface to do this
         // TODO: (2) we should be able to do it using the standard zero-check interface, but right now
         // we cannot
-        let zerocheck_expr =
-            denom_left_index.to_expr::<F>() * (VirtualPolyExpr::Const(logup_eval_point) + store.virtual_polys[h_left.index].clone()) - VirtualPolyExpr::Const(F::one()) +
-            VirtualPolyExpr::Const(lambda) *
-            (denom_right_index.to_expr::<F>() * (VirtualPolyExpr::Const(logup_eval_point) + store.virtual_polys[h_right.index].clone()) - VirtualPolyExpr::Const(F::one()));
+        let zerocheck_expr = denom_left_index.to_expr::<F>()
+            * (VirtualPolyExpr::Const(logup_eval_point)
+                + store.virtual_polys[h_left.index].clone())
+            - VirtualPolyExpr::Const(F::one())
+            + VirtualPolyExpr::Const(lambda)
+                * (denom_right_index.to_expr::<F>()
+                    * (VirtualPolyExpr::Const(logup_eval_point)
+                        + store.virtual_polys[h_right.index].clone())
+                    - VirtualPolyExpr::Const(F::one()));
 
         // random point for the zero check
-        let zerocheck_random_point = (0..num_vars).map(|_| transcript.draw_field_element::<F>()).collect::<Vec<F>>();
+        let zerocheck_random_point = (0..num_vars)
+            .map(|_| transcript.draw_field_element::<F>())
+            .collect::<Vec<F>>();
 
         // get evaluations of eq(x, random_point) over {0,1}^n
         let eq_evals = fast_eq_eval_hypercube(num_vars, zerocheck_random_point.as_slice());
@@ -91,32 +108,31 @@ impl<F: PrimeField, PCS:MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         store.mul_const_in_place(&h_hat, alpha);
         store.add_in_place(&h_hat, &denom_left_index);
         store.sub_in_place(&h_hat, &denom_right_index);
-        
+
         // at this point
         // h_hat = zerocheck_expr * eq_poly * alpha + (denom_left - denom_right)
         // the sum should be zero
-        let (sumcheck_proof, sumcheck_evaluation_claim) = SumcheckProof::prove(
-            num_vars,
-            store,
-            &h_hat,
-            F::zero(),
-            transcript,
-        );
+        let (sumcheck_proof, sumcheck_evaluation_claim) =
+            SumcheckProof::prove(num_vars, store, &h_hat, F::zero(), transcript);
 
         let evaluation_point = sumcheck_evaluation_claim.point;
 
-        let opening_proof_denom_left = pcs.open(&log_derivative_left_evals, &evaluation_point, transcript);
-        let opening_proof_denom_right = pcs.open(&log_derivative_right_evals, &evaluation_point, transcript);
+        let opening_proof_denom_left =
+            pcs.open(&log_derivative_left_evals, &evaluation_point, transcript);
+        let opening_proof_denom_right =
+            pcs.open(&log_derivative_right_evals, &evaluation_point, transcript);
 
-        (Self {
-            denom_left_commitment: commitment_left,
-            denom_right_commitment: commitment_right,
-            sumcheck_proof,
-            opening_proof_denom_left,
-            opening_proof_denom_right,
-        }, evaluation_point)
+        (
+            Self {
+                denom_left_commitment: commitment_left,
+                denom_right_commitment: commitment_right,
+                sumcheck_proof,
+                opening_proof_denom_left,
+                opening_proof_denom_right,
+            },
+            evaluation_point,
+        )
     }
-
 
     /// Assumes that the left and right evaluation claims have been verified separately
     pub fn verify(
@@ -137,44 +153,51 @@ impl<F: PrimeField, PCS:MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         let lambda = transcript.draw_field_element::<F>();
         let alpha = transcript.draw_field_element::<F>();
 
-        let zerocheck_random_point = (0..left_h_eval.point.len()).map(|_| transcript.draw_field_element::<F>()).collect::<Vec<F>>();
+        let zerocheck_random_point = (0..left_h_eval.point.len())
+            .map(|_| transcript.draw_field_element::<F>())
+            .collect::<Vec<F>>();
 
         if self.sumcheck_proof.claimed_sum != F::zero() {
             return Err("Multiset equality sumcheck claimed sum is not zero".to_string());
         }
 
         // verify the sumcheck
-        let sumcheck_evaluation_claim = self.sumcheck_proof.verify(
-            transcript,
-        )?;
+        let sumcheck_evaluation_claim = self.sumcheck_proof.verify(transcript)?;
 
         // verify the openings
         let left_proof_valid = pcs.verify(
             &self.denom_left_commitment,
             &self.opening_proof_denom_left,
-            transcript
+            transcript,
         );
 
         let right_proof_valid = pcs.verify(
             &self.denom_right_commitment,
             &self.opening_proof_denom_right,
-            transcript
+            transcript,
         );
 
         if !left_proof_valid || !right_proof_valid {
             return Err("Multiset equality opening proof verification failed".to_string());
         }
-        
+
         // check that the points are consistent with the reduced sumcheck evaluation claim
         let claimed_point_left = self.opening_proof_denom_left.evaluation_point();
         let claimed_point_right = self.opening_proof_denom_right.evaluation_point();
-        if claimed_point_left != sumcheck_evaluation_claim.point || claimed_point_right != sumcheck_evaluation_claim.point {
-            return Err("Multiset equality opening proof evaluation point does not match sumcheck".to_string());
+        if claimed_point_left != sumcheck_evaluation_claim.point
+            || claimed_point_right != sumcheck_evaluation_claim.point
+        {
+            return Err(
+                "Multiset equality opening proof evaluation point does not match sumcheck"
+                    .to_string(),
+            );
         }
 
         let left_h_eval_point = left_h_eval.point;
         let right_h_eval_point = right_h_eval.point;
-        if left_h_eval_point != sumcheck_evaluation_claim.point || right_h_eval_point != sumcheck_evaluation_claim.point {
+        if left_h_eval_point != sumcheck_evaluation_claim.point
+            || right_h_eval_point != sumcheck_evaluation_claim.point
+        {
             return Err("Multiset equality h evaluation point does not match sumcheck".to_string());
         }
 
@@ -184,14 +207,10 @@ impl<F: PrimeField, PCS:MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         let left_h_eval_value = left_h_eval.evaluation;
         let right_h_eval_value = right_h_eval.evaluation;
 
-        let zerocheck_eval =
-            denom_left_eval * (logup_eval_point + left_h_eval_value) - F::one() +
-            lambda * (denom_right_eval * (logup_eval_point + right_h_eval_value) - F::one());
-        
-        let eq_eval = eq_eval(
-            &zerocheck_random_point,
-            &left_h_eval_point,
-        );
+        let zerocheck_eval = denom_left_eval * (logup_eval_point + left_h_eval_value) - F::one()
+            + lambda * (denom_right_eval * (logup_eval_point + right_h_eval_value) - F::one());
+
+        let eq_eval = eq_eval(&zerocheck_random_point, &left_h_eval_point);
         let final_eval = zerocheck_eval * eq_eval * alpha + denom_left_eval - denom_right_eval;
 
         if final_eval != sumcheck_evaluation_claim.evaluation {
@@ -202,17 +221,16 @@ impl<F: PrimeField, PCS:MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use ark_bn254::Fr;
-    use ark_poly::{DenseMultilinearExtension, Polynomial};
-    use ark_std::test_rng;
     use ark_ff::UniformRand;
-    use ark_std::{Zero, One};
-    use quill_pcs::kzg::KZG;
+    use ark_poly::{DenseMultilinearExtension, Polynomial};
     use ark_std::rand::prelude::SliceRandom;
+    use ark_std::test_rng;
+    use ark_std::One;
+    use quill_pcs::kzg::KZG;
 
     #[test]
     fn test_multiset_equality_proof() {
@@ -220,12 +238,14 @@ mod tests {
         let num_vars = 7;
 
         println!("KZG setup...");
-        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1<<num_vars, &mut rng);
+        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1 << num_vars, &mut rng);
         println!("KZG setup done.");
 
         // generate a random degree 2^num_vars polynomial
         let poly_degree = 1 << num_vars;
-        let poly_coeffs = (0..poly_degree).map(|_| Fr::rand(&mut rng)).collect::<Vec<Fr>>();
+        let poly_coeffs = (0..poly_degree)
+            .map(|_| Fr::rand(&mut rng))
+            .collect::<Vec<Fr>>();
         let permuted_coeffs = {
             let mut coeffs = poly_coeffs.clone();
             coeffs.shuffle(&mut rng);
@@ -256,12 +276,14 @@ mod tests {
         let mut verifier_transcript = Transcript::new(b"multiset_equality_test");
         let left_evaluation_claim = EvaluationClaim {
             point: evaluation_point.clone(),
-            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, poly_coeffs).evaluate(&evaluation_point),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, poly_coeffs)
+                .evaluate(&evaluation_point),
         };
 
         let right_evaluation_claim = EvaluationClaim {
             point: evaluation_point.clone(),
-            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, permuted_coeffs).evaluate(&evaluation_point),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, permuted_coeffs)
+                .evaluate(&evaluation_point),
         };
 
         println!("Verifying multiset equality proof...");
@@ -272,9 +294,12 @@ mod tests {
             right_evaluation_claim,
         );
 
-        assert!(verify_result.is_ok(), "Multiset equality proof verification failed: {:?}", verify_result.err());
+        assert!(
+            verify_result.is_ok(),
+            "Multiset equality proof verification failed: {:?}",
+            verify_result.err()
+        );
         println!("Multiset equality proof verified successfully.");
-
     }
 
     #[test]
@@ -283,12 +308,14 @@ mod tests {
         let num_vars = 7;
 
         println!("KZG setup...");
-        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1<<num_vars, &mut rng);
+        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1 << num_vars, &mut rng);
         println!("KZG setup done.");
 
         // generate a random degree 2^num_vars polynomial
         let poly_degree = 1 << num_vars;
-        let poly_coeffs = (0..poly_degree).map(|_| Fr::rand(&mut rng)).collect::<Vec<Fr>>();
+        let poly_coeffs = (0..poly_degree)
+            .map(|_| Fr::rand(&mut rng))
+            .collect::<Vec<Fr>>();
         let mut permuted_coeffs = {
             let mut coeffs = poly_coeffs.clone();
             coeffs.shuffle(&mut rng);
@@ -321,12 +348,14 @@ mod tests {
         let mut verifier_transcript = Transcript::new(b"multiset_equality_test");
         let left_evaluation_claim = EvaluationClaim {
             point: evaluation_point.clone(),
-            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, poly_coeffs).evaluate(&evaluation_point),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, poly_coeffs)
+                .evaluate(&evaluation_point),
         };
 
         let right_evaluation_claim = EvaluationClaim {
             point: evaluation_point.clone(),
-            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, permuted_coeffs).evaluate(&evaluation_point),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, permuted_coeffs)
+                .evaluate(&evaluation_point),
         };
 
         println!("Verifying multiset equality proof...");
@@ -337,7 +366,9 @@ mod tests {
             right_evaluation_claim,
         );
 
-        assert!(verify_result.is_err(), "Multiset equality proof verification should have failed");
-
+        assert!(
+            verify_result.is_err(),
+            "Multiset equality proof verification should have failed"
+        );
     }
 }

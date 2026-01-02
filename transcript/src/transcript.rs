@@ -1,10 +1,10 @@
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use blake3::Hasher;
 
 pub struct Transcript {
     pub domain: Vec<u8>,
-    pub state : Vec<u8>
+    pub state: Vec<u8>,
 }
 
 // TODO: add domain separation and proper Fiat-Shamir implementation.
@@ -62,7 +62,7 @@ impl Transcript {
     }
 
     /// Draw a random field element from the transcript
-    /// 
+    ///
     /// NOTE: this function samples a distribution at least 2^-128-close to the uniform distribution
     /// over the field (assuming that the bytes drawn by the transcript are uniform)
     /// by reducing a uniform integer that has at least field modulus bits + 128 bits.

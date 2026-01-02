@@ -1,14 +1,17 @@
+use crate::{
+    piops::EvaluationClaim,
+    utils::virtual_polynomial::{VirtualPolynomialRef, VirtualPolynomialStore},
+};
 use ark_ff::fields::PrimeField;
-use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
+use ark_poly::Polynomial;
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
+use ark_std::Zero;
 use quill_transcript::transcript::Transcript;
-use ark_std::{Zero};
-use ark_poly::{Polynomial};
-use crate::{piops::EvaluationClaim, utils::virtual_polynomial::{VirtualPolynomialStore, VirtualPolynomialRef}};
 
 /// A sumcheck proof for a virtual polynomial of the form h(g_1(x), ..., g_k(x))
 /// Reduces checking the sum over {0,1}^n of h(g_1(x), ..., g_k(x))
 /// to checking the evaluations of that expression at a random point.
-/// 
+///
 /// NOTE: the evaluation claim has to be checked separately
 #[derive(Clone, Debug)]
 pub struct SumcheckProof<F: PrimeField> {
@@ -22,40 +25,51 @@ impl<F: PrimeField> SumcheckProof<F> {
     /// where each g_i is a multilinear polynomial in n variables, represented
     /// as a vector of evaluations over {0,1}^n, and h is a function F^k -> F
     /// that can be evaluated efficiently.
-    /// 
+    ///
     /// ASSUMES: the commitments to each g_i have already been incorporated into the transcript
-    pub fn prove(num_vars: usize, store: &VirtualPolynomialStore<F>, h: &VirtualPolynomialRef, claimed_sum: F, transcript: &mut Transcript) -> (Self, EvaluationClaim<F>) {
+    pub fn prove(
+        num_vars: usize,
+        store: &VirtualPolynomialStore<F>,
+        h: &VirtualPolynomialRef,
+        claimed_sum: F,
+        transcript: &mut Transcript,
+    ) -> (Self, EvaluationClaim<F>) {
         transcript.append_serializable(&num_vars);
         transcript.append_serializable(&claimed_sum);
 
-        let mut output_r_polys : Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
-        let mut evaluation_point : Vec<F> = Vec::with_capacity(num_vars);
+        let mut output_r_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
+        let mut evaluation_point: Vec<F> = Vec::with_capacity(num_vars);
         let mut evaluation_claim = F::zero();
 
         // TODO: locally clone only the evaluations of the polynomials that appear in h
         // right now we clone all of them
-        let mut gs_local : Vec<Vec<F>> = store.polynomials.clone().iter().map(|poly| poly.evaluations.clone()).collect();
+        let mut gs_local: Vec<Vec<F>> = store
+            .polynomials
+            .clone()
+            .iter()
+            .map(|poly| poly.evaluations.clone())
+            .collect();
 
         for i in (0..num_vars).rev() {
-            let mut r_polys : Vec<Vec<DensePolynomial<F>>> = Vec::with_capacity(gs_local.len());
-            for point in 0..(1<<i) {
+            let mut r_polys: Vec<Vec<DensePolynomial<F>>> = Vec::with_capacity(gs_local.len());
+            for point in 0..(1 << i) {
                 let mut r_polys_i: Vec<DensePolynomial<F>> = Vec::with_capacity(1 << i);
                 for g in &gs_local {
-
                     let low = g[point << 1];
                     let high = g[(point << 1) + 1];
                     // poly = (1-x) * low + x * high = low + x * (high - low)
                     let poly = DensePolynomial::from_coefficients_vec(vec![low, high - low]);
-                    r_polys_i.push(poly);   
+                    r_polys_i.push(poly);
                 }
                 r_polys.push(r_polys_i);
             }
 
             // compute h(r_1(x), ..., r_k(x)) for each poly in r_polys, and sum them up to get the
             // next message polynomial
-            let next_message: DensePolynomial<F> = r_polys.iter().map(|g_polys_i| {
-                store.evaluate_poly(g_polys_i, &h)
-            }).fold(DensePolynomial::zero(), |acc, x| acc + x);
+            let next_message: DensePolynomial<F> = r_polys
+                .iter()
+                .map(|g_polys_i| store.evaluate_poly(g_polys_i, &h))
+                .fold(DensePolynomial::zero(), |acc, x| acc + x);
 
             // append the polynomial to the transcript
             transcript.append_serializable(&next_message);
@@ -68,8 +82,8 @@ impl<F: PrimeField> SumcheckProof<F> {
             // update gs_local to be the evaluations of r_polys at r
             let mut new_gs_local = Vec::with_capacity(gs_local.len());
             for g_index in 0..gs_local.len() {
-                let mut new_g_evals : Vec<F> = Vec::with_capacity(gs_local.len());
-                for point in 0..(1<<i) {
+                let mut new_g_evals: Vec<F> = Vec::with_capacity(gs_local.len());
+                for point in 0..(1 << i) {
                     let poly = &r_polys[point][g_index];
                     let eval = poly.evaluate(&r);
                     new_g_evals.push(eval);
@@ -80,21 +94,26 @@ impl<F: PrimeField> SumcheckProof<F> {
             gs_local = new_gs_local;
 
             if i == 0 {
-                let final_eval_claim = gs_local.iter().map(|g_evals| g_evals[0]).collect::<Vec<F>>();
+                let final_eval_claim = gs_local
+                    .iter()
+                    .map(|g_evals| g_evals[0])
+                    .collect::<Vec<F>>();
                 evaluation_claim = store.evaluate_point(&final_eval_claim, &h);
             }
         }
-        
-        (Self {
-            num_vars: num_vars,
-            claimed_sum: claimed_sum,
-            r_polys: output_r_polys,
-        }, EvaluationClaim {
-            point: evaluation_point,
-            evaluation: evaluation_claim,
-        })
-    }
 
+        (
+            Self {
+                num_vars: num_vars,
+                claimed_sum: claimed_sum,
+                r_polys: output_r_polys,
+            },
+            EvaluationClaim {
+                point: evaluation_point,
+                evaluation: evaluation_claim,
+            },
+        )
+    }
 
     pub fn verify(&self, transcript: &mut Transcript) -> Result<EvaluationClaim<F>, String> {
         // reconstruct the transcript state
@@ -102,10 +121,9 @@ impl<F: PrimeField> SumcheckProof<F> {
         transcript.append_serializable(&self.claimed_sum);
 
         let mut v = self.claimed_sum;
-        let mut evaluation_point : Vec<F> = Vec::with_capacity(self.num_vars);
+        let mut evaluation_point: Vec<F> = Vec::with_capacity(self.num_vars);
 
         for transcript_poly in &self.r_polys {
-
             // check that r(0) + r(1) == v
             let eval_at_0 = transcript_poly.evaluate(&F::zero());
             let eval_at_1 = transcript_poly.evaluate(&F::one());
@@ -117,7 +135,7 @@ impl<F: PrimeField> SumcheckProof<F> {
 
             // incorporate the sent polynomial into the transcript
             transcript.append_serializable(transcript_poly);
-            
+
             // draw the random challenge
             let r = transcript.draw_field_element::<F>();
             evaluation_point.push(r);
@@ -137,14 +155,14 @@ impl<F: PrimeField> SumcheckProof<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use crate::utils::virtual_polynomial::VirtualPolynomialStore;
+    use ark_bn254::Fr;
 
     #[test]
     fn test_sumcheck_proof() {
         let num_vars = 3;
         // define g_1(x1,x2,x3) = x1 + 2*x2 + 3*x3
-        let g1_evals : Vec<Fr> = (0..(1 << num_vars))
+        let g1_evals: Vec<Fr> = (0..(1 << num_vars))
             .map(|i| {
                 let x1 = Fr::from(((i >> 0) & 1) as u64);
                 let x2 = Fr::from(((i >> 1) & 1) as u64);
@@ -154,7 +172,7 @@ mod tests {
             .collect();
 
         // define g_2(x1,x2,x3) = x1 * 2 * x2 + 3 * x1 * x3
-        let g2_evals : Vec<Fr> = (0..(1 << num_vars))
+        let g2_evals: Vec<Fr> = (0..(1 << num_vars))
             .map(|i| {
                 let x1 = Fr::from(((i >> 0) & 1) as u64);
                 let x2 = Fr::from(((i >> 1) & 1) as u64);
@@ -171,7 +189,11 @@ mod tests {
         let virtual_poly = store.new_virtual_from_input(&g1_ref);
         store.mul_in_place(&virtual_poly, &g2_ref);
 
-        let claimed_sum: Fr = g1_evals.iter().zip(g2_evals.iter()).map(|(a,b)| *a * *b).sum();
+        let claimed_sum: Fr = g1_evals
+            .iter()
+            .zip(g2_evals.iter())
+            .map(|(a, b)| *a * *b)
+            .sum();
 
         let (proof, prover_evaluation_claim) = SumcheckProof::prove(
             num_vars,
@@ -180,25 +202,32 @@ mod tests {
             claimed_sum,
             &mut Transcript::new(b"sumcheck_test"),
         );
-        let evaluation_claim = proof.verify(
-            &mut Transcript::new(b"sumcheck_test"),
-        ).unwrap();
+        let evaluation_claim = proof
+            .verify(&mut Transcript::new(b"sumcheck_test"))
+            .unwrap();
 
-        assert_eq!(evaluation_claim.evaluation, prover_evaluation_claim.evaluation, "Evaluation claim should match prover's claim");
-        assert_eq!(evaluation_claim.point, prover_evaluation_claim.point, "Evaluation point should match prover's point");
+        assert_eq!(
+            evaluation_claim.evaluation, prover_evaluation_claim.evaluation,
+            "Evaluation claim should match prover's claim"
+        );
+        assert_eq!(
+            evaluation_claim.point, prover_evaluation_claim.point,
+            "Evaluation point should match prover's point"
+        );
 
         let point = &evaluation_claim.point;
 
         // check manually the evaluation claim
-        let g1_at_r : Fr = point[0] + 
-            Fr::from(2u64)* point[1] +
-            Fr::from(3u64) * point[2];
-        
-        let g2_at_r : Fr = point[0] * Fr::from(2u64) * point[1] +
-            Fr::from(3u64) * point[0] * point[2];
-        
+        let g1_at_r: Fr = point[0] + Fr::from(2u64) * point[1] + Fr::from(3u64) * point[2];
+
+        let g2_at_r: Fr =
+            point[0] * Fr::from(2u64) * point[1] + Fr::from(3u64) * point[0] * point[2];
+
         let h_at_r = store.evaluate_point(&vec![g1_at_r, g2_at_r], &virtual_poly);
-        
-        assert_eq!(evaluation_claim.evaluation, h_at_r, "Evaluation claim should match g1 at the evaluation point");
+
+        assert_eq!(
+            evaluation_claim.evaluation, h_at_r,
+            "Evaluation claim should match g1 at the evaluation point"
+        );
     }
 }

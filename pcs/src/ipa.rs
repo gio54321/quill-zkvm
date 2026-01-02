@@ -1,33 +1,33 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
-use ark_std::{Zero};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial};
+use ark_poly::DenseUVPolynomial;
+use ark_std::Zero;
 use quill_transcript::transcript::Transcript;
 
 use crate::kzg::KZGOpeningProof;
 
 /// A proof for the inner product of two polynomials committed using KZG.
 /// The technique is inspired by Mercury (https://eprint.iacr.org/2025/385.pdf) and earlier papers.
-/// 
+///
 /// Suppose we have two polynomials `f(x)` and `g(x)`, both of degree `d`. Then notice that the constant term
 /// of the polynomial
-/// 
+///
 /// > h(x) = f(x) * g(1/x)
-/// 
+///
 /// is exactly the inner product of the coefficients of `f` and `g`.
-/// 
+///
 /// To prove that `v` is the inner product of the coefficients of `f` and `g`, the prover decomposes a slightly modified
 /// `h(x)` as
-/// 
+///
 /// > h(x) = f(x) * g(1/x) + f(1/x) * g(x) = x * S(x) + 1/x * S(1/x) + 2*v
-/// 
+///
 /// for some polynomials `S(x)`.
-/// 
+///
 /// The prover sends commitments to `S(x)`, then the verifier samples a random challenge `r` and checks that
-/// 
+///
 /// > f(r) * g(1/r) + f(1/r) * g(r) = r * S(r) + 1/r * S(1/r) + 2*v
-/// 
+///
 /// using suitable KZG opening proofs.
 pub struct InnerProductProof<E: Pairing> {
     /// The result of the inner product
@@ -36,19 +36,24 @@ pub struct InnerProductProof<E: Pairing> {
     pub s_comm: E::G1,
 
     // Opening proofs
-    pub f_opening : KZGOpeningProof<E>,
-    pub f_opening_inv : KZGOpeningProof<E>,
-    pub g_opening : KZGOpeningProof<E>,
-    pub g_opening_inv : KZGOpeningProof<E>,
-    pub s_opening : KZGOpeningProof<E>,
-    pub s_opening_inv : KZGOpeningProof<E>,
+    pub f_opening: KZGOpeningProof<E>,
+    pub f_opening_inv: KZGOpeningProof<E>,
+    pub g_opening: KZGOpeningProof<E>,
+    pub g_opening_inv: KZGOpeningProof<E>,
+    pub s_opening: KZGOpeningProof<E>,
+    pub s_opening_inv: KZGOpeningProof<E>,
 }
 
 impl<E: Pairing> InnerProductProof<E> {
     /// Prove the inner product of two polynomials
-    /// 
+    ///
     /// ASSUMES: the commitments to the polynomials have been already incorporated into the transcript
-    pub fn prove(poly1 : &[E::ScalarField], poly2: &[E::ScalarField], kzg: &super::kzg::KZG<E>, transcript: &mut Transcript) -> Self {
+    pub fn prove(
+        poly1: &[E::ScalarField],
+        poly2: &[E::ScalarField],
+        kzg: &super::kzg::KZG<E>,
+        transcript: &mut Transcript,
+    ) -> Self {
         // the first thing to do is to find the inner product
         let mut inner_product = E::ScalarField::zero();
         for (a, b) in poly1.iter().zip(poly2.iter()) {
@@ -78,8 +83,11 @@ impl<E: Pairing> InnerProductProof<E> {
         let s_opening = kzg.open(&s_poly.coeffs, r);
         let s_opening_inv = kzg.open(&s_poly.coeffs, r_inv);
 
-        assert!(f_opening.y * g_opening_inv.y + f_opening_inv.y * g_opening.y ==
-            r * s_opening.y + r_inv * s_opening_inv.y + E::ScalarField::from(2u64) * inner_product,
+        assert!(
+            f_opening.y * g_opening_inv.y + f_opening_inv.y * g_opening.y
+                == r * s_opening.y
+                    + r_inv * s_opening_inv.y
+                    + E::ScalarField::from(2u64) * inner_product,
             "Inner product verification equation failed"
         );
 
@@ -91,9 +99,8 @@ impl<E: Pairing> InnerProductProof<E> {
             g_opening,
             g_opening_inv,
             s_opening,
-            s_opening_inv
-        }
-
+            s_opening_inv,
+        };
     }
 
     /// To compute the polynomial S(x) we need to compute `h(x) = f(x) * g(1/x) + f(1/x) * g(x)`
@@ -104,11 +111,18 @@ impl<E: Pairing> InnerProductProof<E> {
     /// h(x) = x^d (x * S(x) + 1/x * S(1/x) + 2*inner_product)
     /// therefore, h(x) is of a very special structure:
     /// h(x).coeffs = [s{d-1}, s{d-2}, ...,s1, s0, 2*inner_product, s0, s1, ..., s{d-2}, s{d-1}]
-    pub fn compute_s_polynomial(poly1 : &[E::ScalarField], poly2: &[E::ScalarField]) -> DensePolynomial<E::ScalarField> {
+    pub fn compute_s_polynomial(
+        poly1: &[E::ScalarField],
+        poly2: &[E::ScalarField],
+    ) -> DensePolynomial<E::ScalarField> {
         let poly1 = DensePolynomial::from_coefficients_slice(poly1);
         let poly2 = DensePolynomial::from_coefficients_slice(poly2);
-        let poly1_rev = DensePolynomial::from_coefficients_slice(&poly1.coeffs.iter().rev().cloned().collect::<Vec<_>>());
-        let poly2_rev = DensePolynomial::from_coefficients_slice(&poly2.coeffs.iter().rev().cloned().collect::<Vec<_>>());
+        let poly1_rev = DensePolynomial::from_coefficients_slice(
+            &poly1.coeffs.iter().rev().cloned().collect::<Vec<_>>(),
+        );
+        let poly2_rev = DensePolynomial::from_coefficients_slice(
+            &poly2.coeffs.iter().rev().cloned().collect::<Vec<_>>(),
+        );
 
         //TODO: use FFTs here for efficiency, now we are doing naive multiplication which is O(n^2)
         let h_poly = &(&poly1 * &poly2_rev) + &(&poly1_rev * &poly2);
@@ -119,9 +133,14 @@ impl<E: Pairing> InnerProductProof<E> {
         DensePolynomial::from_coefficients_slice(s_coeffs)
     }
 
-
     /// Verify the inner product proof
-    pub fn verify(&self, comm1: &E::G1, comm2: &E::G1, kzg: &super::kzg::KZG<E>, transcript: &mut Transcript) -> bool {
+    pub fn verify(
+        &self,
+        comm1: &E::G1,
+        comm2: &E::G1,
+        kzg: &super::kzg::KZG<E>,
+        transcript: &mut Transcript,
+    ) -> bool {
         let InnerProductProof {
             inner_product,
             s_comm,
@@ -130,7 +149,7 @@ impl<E: Pairing> InnerProductProof<E> {
             g_opening,
             g_opening_inv,
             s_opening,
-            s_opening_inv
+            s_opening_inv,
         } = self;
 
         // verify the openings
@@ -153,18 +172,20 @@ impl<E: Pairing> InnerProductProof<E> {
         let r_inv = r.inverse().unwrap();
 
         // check the main verification equation
-        f_opening.y * g_opening_inv.y + f_opening_inv.y * g_opening.y ==
-            r * s_opening.y + r_inv * s_opening_inv.y + E::ScalarField::from(2u64) * (*inner_product)
+        f_opening.y * g_opening_inv.y + f_opening_inv.y * g_opening.y
+            == r * s_opening.y
+                + r_inv * s_opening_inv.y
+                + E::ScalarField::from(2u64) * (*inner_product)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kzg;
     use ark_bn254::Bn254;
     use ark_bn254::Fr;
     use ark_std::test_rng;
-    use crate::kzg;
     use ark_std::One;
 
     #[test]
@@ -204,6 +225,9 @@ mod tests {
         };
 
         let is_valid = wrong_proof.verify(&comm1, &comm2, &kzg, &mut verifier_transcript);
-        assert!(!is_valid, "Inner product proof verification should have failed but didn't");
+        assert!(
+            !is_valid,
+            "Inner product proof verification should have failed but didn't"
+        );
     }
 }
