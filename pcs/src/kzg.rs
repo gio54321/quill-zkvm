@@ -39,13 +39,15 @@ impl<E: Pairing> KZG<E> {
         let tau = E::ScalarField::rand(rng);
 
         let mut g1_points = Vec::with_capacity(max_degree + 1);
-        let mut g2_points = Vec::with_capacity(max_degree + 1);
+        let mut g2_points = Vec::with_capacity(2);
 
         for i in 0..=max_degree {
             let tau_i = tau.pow([i as u64]);
             g1_points.push(g1_generator * tau_i);
-            g2_points.push(g2_generator * tau_i);
         }
+
+        g2_points.push(g2_generator);
+        g2_points.push(g2_generator * tau);
 
         KZG {
             max_degree,
