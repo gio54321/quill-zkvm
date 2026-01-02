@@ -224,6 +224,14 @@ impl<F: PrimeField> VirtualPolynomialStore<F> {
         self.virtual_polys[f_index.index] = VirtualPolyExpr::Mul(Box::new(f_expr), Box::new(g_expr));
     }
 
+    /// Replace the virtual polynomial referenced by f_index with the product of itself and
+    /// the constant polynomial c
+    pub fn mul_const_in_place(&mut self, f_index: &VirtualPolynomialRef, c: F) {
+        let f_expr = self.virtual_polys[f_index.index].clone();
+        let c_expr = VirtualPolyExpr::Const(c);
+        self.virtual_polys[f_index.index] = VirtualPolyExpr::Mul(Box::new(f_expr), Box::new(c_expr));
+    }
+
     /// Evaluate the virtual polynomial given in input univariate polynomials
     /// representing the g_i(x) polynomials
     /// Curretnly this is implemented naively by recursively evaluating the expression tree
@@ -284,5 +292,9 @@ impl<F: PrimeField> VirtualPolynomialStore<F> {
                 left_val * right_val
             },
         }
+    }
+
+    pub fn get_input_poly_evaluations(&self, g_index: &VirtualPolynomialInputRef) -> &DenseMultilinearExtension<F> {
+        &self.polynomials[g_index.index]
     }
 }
