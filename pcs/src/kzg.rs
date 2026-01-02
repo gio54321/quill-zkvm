@@ -4,8 +4,8 @@ use ark_ff::Field;
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, Polynomial};
 use ark_std::rand::Rng;
+use ark_std::One;
 use ark_std::UniformRand;
-use ark_std::{One, Zero};
 
 pub struct KZG<E: Pairing> {
     /// Maximum degree of polynomials supported
