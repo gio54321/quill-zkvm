@@ -117,11 +117,11 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         }
     }
 
-    pub fn from_poly_evals(num_vars: usize, poly_evals: Vec<F>) -> (Self, VirtualPolynomialInputRef) {
+    pub fn from_poly_evals(num_vars: usize, poly_evals: &Vec<F>) -> (Self, VirtualPolynomialInputRef) {
         assert_eq!(poly_evals.len(), 1 << num_vars, "Input polynomial evaluations length does not match number of variables");
         let vp = VirtualPolynomial {
             num_vars,
-            polynomials: vec![poly_evals],
+            polynomials: vec![poly_evals.clone()],
             expr: VirtualPolyExpr::Input(0),
         };
         let vref = VirtualPolynomialInputRef { index: 0 };
@@ -134,10 +134,10 @@ impl<F: PrimeField> VirtualPolynomial<F> {
 
     /// Allocate a new input polynomial represented by its evaluations over {0,1}^n
     /// and return a reference to it
-    pub fn allocate_input_mle(&mut self, poly_evals: Vec<F>) -> VirtualPolynomialInputRef {
+    pub fn allocate_input_mle(&mut self, poly_evals: &Vec<F>) -> VirtualPolynomialInputRef {
         assert_eq!(poly_evals.len(), 1 << self.num_vars, "Input polynomial evaluations length does not match number of variables");
         let index = self.polynomials.len();
-        self.polynomials.push(poly_evals);
+        self.polynomials.push(poly_evals.clone());
         VirtualPolynomialInputRef { index }
     }
 
@@ -146,6 +146,17 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         self.expr = VirtualPolyExpr::Add(
             Box::new(self.expr.clone()),
             Box::new(VirtualPolyExpr::Input(g_index.index))
+        );
+    }
+    
+    /// Subtract the input polynomial referenced by g_index from the virtual polynomial
+    pub fn sub_mle(&mut self, g_index: VirtualPolynomialInputRef) {
+        self.expr = VirtualPolyExpr::Add(
+            Box::new(self.expr.clone()),
+            Box::new(VirtualPolyExpr::Mul(
+                Box::new(VirtualPolyExpr::Input(g_index.index)),
+                Box::new(VirtualPolyExpr::Const(F::zero() - F::one())),
+            )),
         );
     }
 
