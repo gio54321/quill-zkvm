@@ -74,8 +74,6 @@ impl<F: PrimeField> SumcheckProof<F> {
             }
 
             gs_local = new_gs_local;
-
-            println!("Sumcheck round {} done, gs_local: {:?}", num_vars - i, gs_local);
         }
         
         Self {
@@ -99,8 +97,7 @@ impl<F: PrimeField> SumcheckProof<F> {
             // check that r(0) + r(1) == v
             let eval_at_0 = transcript_poly.evaluate(&F::zero());
             let eval_at_1 = transcript_poly.evaluate(&F::one());
-            println!("Verifying sumcheck round {}, v = {:?}", evaluation_point.len() + 1, v);
-            println!("r(0) = {:?}, r(1) = {:?}", eval_at_0, eval_at_1);
+
             // check that r_i(0) + r_i(1) == v
             if eval_at_0 + eval_at_1 != v {
                 return Err("Sumcheck polynomial does not sum to previous value".to_string());
