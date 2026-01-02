@@ -5,6 +5,7 @@ use ark_std::rand::Rng;
 use ark_std::UniformRand;
 use ark_ec::pairing::Pairing;
 use ark_std::{Zero, One};
+use ark_ec::{CurveGroup, VariableBaseMSM};
 
 
 pub struct KZG<E: Pairing> {
@@ -61,11 +62,11 @@ impl<E: Pairing> KZG<E> {
     pub fn commit(&self, polynomial: &[E::ScalarField]) -> E::G1 {
         assert!(polynomial.len() <= self.max_degree + 1, "Polynomial degree exceeds max degree");
 
-        let mut commitment = E::G1::zero();
-        for (i, coeff) in polynomial.iter().enumerate() {
-            commitment += self.g1_points[i] * (*coeff);
-        }
-        commitment
+        let g1_points_affine = self.g1_points.iter().map(|p| p.into_affine()).collect::<Vec<_>>();
+        E::G1::msm_unchecked(
+            &g1_points_affine,
+            polynomial,
+        )
     }
 
     pub fn open(&self, polynomial: &[E::ScalarField], x: E::ScalarField) -> KZGOpeningProof<E> {
