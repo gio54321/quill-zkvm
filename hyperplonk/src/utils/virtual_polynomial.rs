@@ -1,5 +1,6 @@
 use ark_ff::fields::PrimeField;
 use ark_poly::univariate::DensePolynomial;
+use ark_poly::DenseMultilinearExtension;
 use ark_poly::{DenseUVPolynomial};
 use ark_std::{Zero, One};
 use std::ops::{Add, Mul};
@@ -69,9 +70,19 @@ impl<F: PrimeField> One for VirtualPolyExpr<F> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct VirtualPolynomialInputRef {
+    index: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct VirtualPolynomialRef {
+    index: usize,
+}
+
 
 /// A "virtual" polynomial:
-/// given multilinear poynomials g1(x), g2(x), ..., gk(x) in n variables,
+/// given a set of multilinear poynomials g1(x), g2(x), ..., gk(x) in n variables,
 /// the virtual polynomial v(x) is defined as v(x) = h(g1(x), g2(x), ..., gk(x))
 /// for some function h: F^k -> F
 /// 
@@ -85,87 +96,100 @@ impl<F: PrimeField> One for VirtualPolyExpr<F> {
 /// expression should be constructed as a balanced binary tree of multiplications to ensure
 /// logarithmic depth, rather than a linear chain of multiplications.
 #[derive(Clone, Debug)]
-pub struct VirtualPolynomial<F: PrimeField> {
-    /// Number of variables of the input polynomials
+pub struct VirtualPolynomialStore<F: PrimeField> {
+    /// Number of variables for the polynomials in the store
     pub num_vars: usize,
-    /// input polynomials g1, g2, ..., gk represented as evaluations over {0,1}^n
-    pub polynomials: Vec<Vec<F>>,
+    /// Polynomials stored as evaluations over {0,1}^num_vars
+    pub polynomials: Vec<DenseMultilinearExtension<F>>,
     /// expression tree representing the function h
-    pub expr: VirtualPolyExpr<F>
+    pub virtual_polys: Vec<VirtualPolyExpr<F>>
 }
 
-pub struct VirtualPolynomialInputRef {
-    pub index: usize,
-}
-
-impl<F: PrimeField> VirtualPolynomial<F> {
-    /// Create a new empty virtual polynomial that is the zero polynomial
-    pub fn zero(num_vars: usize) -> Self {
-        VirtualPolynomial {
+impl<F: PrimeField> VirtualPolynomialStore<F> {
+    pub fn new(num_vars: usize) -> Self {
+        VirtualPolynomialStore {
             num_vars,
             polynomials: Vec::new(),
-            expr: VirtualPolyExpr::Const(F::zero()),
+            virtual_polys: Vec::new(),
         }
     }
 
-    pub fn new(num_vars: usize, polynomials: Vec<Vec<F>>, expr: VirtualPolyExpr<F>) -> Self {
-        assert!(polynomials.iter().all(|p| p.len() == (1 << num_vars)), "Input polynomial evaluations length does not match number of variables");
-        VirtualPolynomial {
-            num_vars,
-            polynomials,
-            expr,
-        }
-    }
-
-    pub fn from_poly_evals(num_vars: usize, poly_evals: &Vec<F>) -> (Self, VirtualPolynomialInputRef) {
-        assert_eq!(poly_evals.len(), 1 << num_vars, "Input polynomial evaluations length does not match number of variables");
-        let vp = VirtualPolynomial {
-            num_vars,
-            polynomials: vec![poly_evals.clone()],
-            expr: VirtualPolyExpr::Input(0),
-        };
-        let vref = VirtualPolynomialInputRef { index: 0 };
-        (vp, vref)
-    }
-
-    pub fn set_expr(&mut self, expr: VirtualPolyExpr<F>) {
-        self.expr = expr;
-    }
-
-    /// Allocate a new input polynomial represented by its evaluations over {0,1}^n
-    /// and return a reference to it
-    pub fn allocate_input_mle(&mut self, poly_evals: &Vec<F>) -> VirtualPolynomialInputRef {
+    /// Add a polynomial represented by its evaluations over {0,1}^n to the store
+    pub fn allocate_polynomial(&mut self, poly_evals: &Vec<F>) -> VirtualPolynomialInputRef {
         assert_eq!(poly_evals.len(), 1 << self.num_vars, "Input polynomial evaluations length does not match number of variables");
         let index = self.polynomials.len();
-        self.polynomials.push(poly_evals.clone());
+        let mle = DenseMultilinearExtension::from_evaluations_slice(self.num_vars, poly_evals);
+        self.polynomials.push(mle);
         VirtualPolynomialInputRef { index }
     }
 
-    /// Add the input polynomial referenced by g_index to the virtual polynomial
-    pub fn add_mle(&mut self, g_index: VirtualPolynomialInputRef) {
-        self.expr = VirtualPolyExpr::Add(
-            Box::new(self.expr.clone()),
-            Box::new(VirtualPolyExpr::Input(g_index.index))
-        );
-    }
-    
-    /// Subtract the input polynomial referenced by g_index from the virtual polynomial
-    pub fn sub_mle(&mut self, g_index: VirtualPolynomialInputRef) {
-        self.expr = VirtualPolyExpr::Add(
-            Box::new(self.expr.clone()),
-            Box::new(VirtualPolyExpr::Mul(
-                Box::new(VirtualPolyExpr::Input(g_index.index)),
-                Box::new(VirtualPolyExpr::Const(F::zero() - F::one())),
-            )),
-        );
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
     }
 
-    /// Multiply the virtual polynomial by the input polynomial referenced by g_index
-    pub fn mul_mle(&mut self, g_index: VirtualPolynomialInputRef) {
-        self.expr = VirtualPolyExpr::Mul(
-            Box::new(self.expr.clone()),
-            Box::new(VirtualPolyExpr::Input(g_index.index))
-        );
+    /// Create a new virtual polynomial in the store that is initially equal to the
+    /// input polynomial referenced by g
+    /// Assumes g references a polynomial already in the store
+    pub fn new_virtual_from_input(&mut self, g: &VirtualPolynomialInputRef) -> VirtualPolynomialRef {
+        let expr = VirtualPolyExpr::Input(g.index);
+        let index = self.virtual_polys.len();
+        self.virtual_polys.push(expr);
+        VirtualPolynomialRef {
+            index,
+        }
+    }
+
+    /// Create a new virtual polynomial in the store that is identically zero
+    pub fn new_virtual_zero(&mut self) -> VirtualPolynomialRef {
+        let expr = VirtualPolyExpr::zero();
+        let index = self.virtual_polys.len();
+        self.virtual_polys.push(expr);
+        VirtualPolynomialRef {
+            index,
+        }
+    }
+
+    /// Create a new virtual polynomial in the store that is identically one
+    pub fn new_virtual_one(&mut self) -> VirtualPolynomialRef {
+        let expr = VirtualPolyExpr::one();
+        let index = self.virtual_polys.len();
+        self.virtual_polys.push(expr);
+        VirtualPolynomialRef {
+            index,
+        }
+    }
+
+    /// Replace the virtual polynomial referenced by f_index with the sum of itself and
+    /// the input polynomial referenced by g_index
+    pub fn add_in_place(&mut self, f_index: &VirtualPolynomialRef, g_index: &VirtualPolynomialInputRef) {
+        let f_expr = self.virtual_polys[f_index.index].clone();
+        let g_expr = VirtualPolyExpr::Input(g_index.index);
+        self.virtual_polys[f_index.index] = VirtualPolyExpr::Add(Box::new(f_expr), Box::new(g_expr));
+    }
+
+    /// Replace the virtual polynomial referenced by f_index with the sum of itself and
+    /// the constant polynomial c
+    pub fn add_const_in_place(&mut self, f_index: &VirtualPolynomialRef, c: F) {
+        let f_expr = self.virtual_polys[f_index.index].clone();
+        let c_expr = VirtualPolyExpr::Const(c);
+        self.virtual_polys[f_index.index] = VirtualPolyExpr::Add(Box::new(f_expr), Box::new(c_expr));
+    }
+
+    /// Replace the virtual polynomial referenced by f_index with the difference of itself and
+    /// the input polynomial referenced by g_index
+    pub fn subtract_in_place(&mut self, f_index: &VirtualPolynomialRef, g_index: &VirtualPolynomialInputRef) {
+        let f_expr = self.virtual_polys[f_index.index].clone();
+        let g_expr = VirtualPolyExpr::Input(g_index.index);
+        let neg_g_expr = VirtualPolyExpr::Mul(Box::new(VirtualPolyExpr::Const(F::from(-1i32))), Box::new(g_expr));
+        self.virtual_polys[f_index.index] = VirtualPolyExpr::Add(Box::new(f_expr), Box::new(neg_g_expr));
+    }
+
+    /// Replace the virtual polynomial referenced by f_index with the product of itself and
+    /// the input polynomial referenced by g_index
+    pub fn mul_in_place(&mut self, f_index: &VirtualPolynomialRef, g_index: &VirtualPolynomialInputRef) {
+        let f_expr = self.virtual_polys[f_index.index].clone();
+        let g_expr = VirtualPolyExpr::Input(g_index.index);
+        self.virtual_polys[f_index.index] = VirtualPolyExpr::Mul(Box::new(f_expr), Box::new(g_expr));
     }
 
     /// Evaluate the virtual polynomial given in input univariate polynomials
@@ -174,9 +198,10 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// and performing polynomial addition and naive multiplication, which is quadratic in the
     /// degree of the polynomials. Therefore, this currently takes O(d^2 * depth) where
     /// d is the degree of h.
-    pub fn evaluate_poly(&self, g_polys: &Vec<DensePolynomial<F>>) -> DensePolynomial<F> {
+    pub fn evaluate_poly(&self, g_polys: &Vec<DensePolynomial<F>>, virtual_index: &VirtualPolynomialRef) -> DensePolynomial<F> {
         assert_eq!(g_polys.len(), self.polynomials.len(), "Incorrect number of input polynomials provided for evaluation");
-        self.evaluate_expr_poly(&self.expr, &g_polys)
+        let expr = &self.virtual_polys[virtual_index.index];
+        self.evaluate_expr_poly(expr, &g_polys)
     }
 
     fn evaluate_expr_poly(&self, expr: &VirtualPolyExpr<F>, g_polys: &Vec<DensePolynomial<F>>) -> DensePolynomial<F> {
@@ -202,9 +227,10 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     }
 
     /// Evaluate the virtual polynomial over the 
-    pub fn evaluate_point(&self, g_evals: &Vec<F>) -> F {
+    pub fn evaluate_point(&self, g_evals: &Vec<F>, virtual_index: &VirtualPolynomialRef) -> F {
         assert_eq!(g_evals.len(), self.polynomials.len(), "Incorrect number of input polynomial evaluations provided for evaluation");
-        self.evaluate_expr(&self.expr, g_evals)
+        let expr = &self.virtual_polys[virtual_index.index];
+        self.evaluate_expr(expr, g_evals)
     }
 
     fn evaluate_expr(&self, expr: &VirtualPolyExpr<F>, g_evals: &Vec<F>) -> F {

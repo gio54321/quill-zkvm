@@ -3,7 +3,7 @@ use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
 use quill_transcript::transcript::Transcript;
 use ark_std::{Zero};
 use ark_poly::{Polynomial};
-use crate::{piops::EvaluationClaim, utils::virtual_polynomial::VirtualPolynomial};
+use crate::{piops::EvaluationClaim, utils::virtual_polynomial::{VirtualPolynomialStore, VirtualPolynomialRef}};
 
 /// A sumcheck proof for a virtual polynomial of the form h(g_1(x), ..., g_k(x))
 /// Reduces checking the sum over {0,1}^n of h(g_1(x), ..., g_k(x))
@@ -24,13 +24,16 @@ impl<F: PrimeField> SumcheckProof<F> {
     /// that can be evaluated efficiently.
     /// 
     /// ASSUMES: the commitments to each g_i have already been incorporated into the transcript
-    pub fn prove(num_vars: usize, h : &VirtualPolynomial<F>, claimed_sum: F, transcript: &mut Transcript) -> Self {
+    pub fn prove(num_vars: usize, store: &VirtualPolynomialStore<F>, h: &VirtualPolynomialRef, claimed_sum: F, transcript: &mut Transcript) -> Self {
         transcript.append_serializable(&num_vars);
         transcript.append_serializable(&claimed_sum);
 
         let mut output_r_polys : Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
         let mut evaluation_point : Vec<F> = Vec::with_capacity(num_vars);
-        let mut gs_local : Vec<Vec<F>> = h.polynomials.clone();
+
+        // TODO: locally clone only the evaluations of the polynomials that appear in h
+        // right now we clone all of them
+        let mut gs_local : Vec<Vec<F>> = store.polynomials.clone().iter().map(|poly| poly.evaluations.clone()).collect();
 
         for i in (0..num_vars).rev() {
             let mut r_polys : Vec<Vec<DensePolynomial<F>>> = Vec::with_capacity(gs_local.len());
@@ -50,7 +53,7 @@ impl<F: PrimeField> SumcheckProof<F> {
             // compute h(r_1(x), ..., r_k(x)) for each poly in r_polys, and sum them up to get the
             // next message polynomial
             let next_message: DensePolynomial<F> = r_polys.iter().map(|g_polys_i| {
-                h.evaluate_poly(g_polys_i)
+                store.evaluate_poly(g_polys_i, &h)
             }).fold(DensePolynomial::zero(), |acc, x| acc + x);
 
             // append the polynomial to the transcript
@@ -126,6 +129,7 @@ impl<F: PrimeField> SumcheckProof<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
+    use crate::utils::virtual_polynomial::{self, VirtualPolyExpr, VirtualPolynomialStore};
 
     #[test]
     fn test_sumcheck_proof() {
@@ -151,15 +155,19 @@ mod tests {
             .collect();
 
         // create a virtual polynomial h(g1, g2) = g1 * g2
-        let (mut virtual_poly, _g1_ref) = VirtualPolynomial::from_poly_evals(num_vars, &g1_evals);
-        let g2_ref = virtual_poly.allocate_input_mle(&g2_evals);
-        virtual_poly.mul_mle(g2_ref);
+        let mut store = VirtualPolynomialStore::new(num_vars);
+        let g1_ref = store.allocate_polynomial(&g1_evals);
+        let g2_ref = store.allocate_polynomial(&g2_evals);
+
+        let virtual_poly = store.new_virtual_from_input(&g1_ref);
+        store.mul_in_place(&virtual_poly, &g2_ref);
 
         let claimed_sum: Fr = g1_evals.iter().zip(g2_evals.iter()).map(|(a,b)| *a * *b).sum();
 
         
         let proof = SumcheckProof::prove(
             num_vars,
+            &store,
             &virtual_poly,
             claimed_sum,
             &mut Transcript::new(b"sumcheck_test"),
@@ -180,7 +188,7 @@ mod tests {
         let g2_at_r : Fr = point[0] * Fr::from(2u64) * point[1] +
             Fr::from(3u64) * point[0] * point[2];
         
-        let h_at_r = virtual_poly.evaluate_point(&vec![g1_at_r, g2_at_r]);
+        let h_at_r = store.evaluate_point(&vec![g1_at_r, g2_at_r], &virtual_poly);
         
         assert_eq!(evaluation_claim.evaluation, h_at_r, "Evaluation claim should match g1 at the evaluation point");
     }
