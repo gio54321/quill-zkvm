@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
 use quill_transcript::transcript::Transcript;
 
 
@@ -8,9 +9,8 @@ pub mod mlpcs;
 
 pub trait MultilinearPCS<F: PrimeField> {
     type CRS;
-    type Commitment;
-    type Proof;
-
+    type Commitment: Sized + Clone + CanonicalSerialize;
+    type Proof: Sized;
 
     fn trusted_setup(degree: usize) -> Self::CRS;
     fn commit(&self, poly: &[F]) -> Self::Commitment;
