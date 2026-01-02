@@ -379,6 +379,7 @@ dependencies = [
  "ark-poly",
  "ark-serialize",
  "ark-std",
+ "quill_pcs",
  "quill_transcript",
 ]
 

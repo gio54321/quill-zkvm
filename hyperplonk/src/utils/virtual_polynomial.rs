@@ -3,7 +3,7 @@ use ark_poly::univariate::DensePolynomial;
 use ark_poly::DenseMultilinearExtension;
 use ark_poly::{DenseUVPolynomial};
 use ark_std::{Zero, One};
-use std::ops::{Add, Mul};
+use std::ops::{Add, Mul, Sub};
 
 #[derive(Clone, Debug)]
 pub enum VirtualPolyExpr<F: PrimeField> {
@@ -44,6 +44,15 @@ impl<F: PrimeField> Mul for VirtualPolyExpr<F> {
     }
 }
 
+impl<F: PrimeField> Sub for VirtualPolyExpr<F> {
+    type Output = VirtualPolyExpr<F>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        let neg_rhs = VirtualPolyExpr::Mul(Box::new(VirtualPolyExpr::Const(F::one().neg())), Box::new(rhs));
+        VirtualPolyExpr::Add(Box::new(self), Box::new(neg_rhs))
+    }
+}
+
 impl<F: PrimeField> Zero for VirtualPolyExpr<F> {
     fn zero() -> Self {
         VirtualPolyExpr::Const(F::zero())
@@ -72,12 +81,18 @@ impl<F: PrimeField> One for VirtualPolyExpr<F> {
 
 #[derive(Clone, Debug)]
 pub struct VirtualPolynomialInputRef {
-    index: usize,
+    pub index: usize,
+}
+
+impl VirtualPolynomialInputRef {
+    pub fn to_expr<F : PrimeField>(&self) -> VirtualPolyExpr<F> {
+        VirtualPolyExpr::Input(self.index)
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct VirtualPolynomialRef {
-    index: usize,
+    pub index: usize,
 }
 
 
@@ -141,6 +156,14 @@ impl<F: PrimeField> VirtualPolynomialStore<F> {
 
     pub fn new_virtual_from_virtual(&mut self, v: &VirtualPolynomialRef) -> VirtualPolynomialRef {
         let expr = self.virtual_polys[v.index].clone();
+        let index = self.virtual_polys.len();
+        self.virtual_polys.push(expr);
+        VirtualPolynomialRef {
+            index,
+        }
+    }
+
+    pub fn new_virtual_from_expr(&mut self, expr: VirtualPolyExpr<F>) -> VirtualPolynomialRef {
         let index = self.virtual_polys.len();
         self.virtual_polys.push(expr);
         VirtualPolynomialRef {
