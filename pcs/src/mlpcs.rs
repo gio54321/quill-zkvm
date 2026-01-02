@@ -6,7 +6,7 @@ use ark_poly::{DenseUVPolynomial};
 use quill_transcript::transcript::Transcript;
 use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
 
-use crate::MultilinearPCS;
+use crate::{MultilinearPCS, MultilinearPCSProof};
 use crate::ipa::InnerProductProof;
 use crate::kzg::{KZG, KZGOpeningProof};
 
@@ -149,6 +149,16 @@ impl<E: Pairing> MLEvalProof<E> {
     }
 }
 
+
+impl<E: Pairing> MultilinearPCSProof<E::ScalarField> for MLEvalProof<E> {
+    fn evaluation_point(&self) -> Vec<E::ScalarField> {
+        self.evaluation_point.clone()
+    }
+
+    fn claimed_evaluation(&self) -> E::ScalarField {
+        self.evaluation
+    }
+}
 
 impl<E: Pairing> MultilinearPCS<E::ScalarField> for KZG<E> {
     type CRS = KZG<E>;
