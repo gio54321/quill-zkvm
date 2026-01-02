@@ -13,7 +13,7 @@ pub trait MultilinearPCS<F: PrimeField> {
 
 
     fn trusted_setup(degree: usize) -> Self::CRS;
-    fn commit(&self, crs: &Self::CRS, poly: &[F]) -> Self::Commitment;
-    fn open(&self, crs: &Self::CRS, poly: &[F], eval_point: &[F], transcript: &mut Transcript) -> Self::Proof;
-    fn verify(&self, crs: &Self::CRS, commitment: &Self::Commitment, proof: &Self::Proof, transcript: &mut Transcript) -> bool;
+    fn commit(&self, poly: &[F]) -> Self::Commitment;
+    fn open(&self, poly: &[F], eval_point: &[F], transcript: &mut Transcript) -> Self::Proof;
+    fn verify(&self, commitment: &Self::Commitment, proof: &Self::Proof, transcript: &mut Transcript) -> bool;
 }

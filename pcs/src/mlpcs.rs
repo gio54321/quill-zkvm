@@ -150,7 +150,7 @@ impl<E: Pairing> MLEvalProof<E> {
 }
 
 
-impl<E: Pairing> MultilinearPCS<E::ScalarField> for MLEvalProof<E> {
+impl<E: Pairing> MultilinearPCS<E::ScalarField> for KZG<E> {
     type CRS = KZG<E>;
     type Commitment = E::G1;
     type Proof = MLEvalProof<E>;
@@ -159,14 +159,14 @@ impl<E: Pairing> MultilinearPCS<E::ScalarField> for MLEvalProof<E> {
         let mut rng = rand::thread_rng();
         KZG::<E>::trusted_setup(degree, &mut rng)
     }
-    fn commit(&self, crs: &Self::CRS, poly: &[E::ScalarField]) -> Self::Commitment {
-        crs.commit(poly)
+    fn commit(&self, poly: &[E::ScalarField]) -> Self::Commitment {
+        self.commit(poly)
     }
-    fn open(&self, crs: &Self::CRS, poly: &[E::ScalarField], eval_point: &[E::ScalarField], transcript: &mut Transcript) -> Self::Proof {
-        MLEvalProof::prove(poly, eval_point, crs, transcript)
+    fn open(&self, poly: &[E::ScalarField], eval_point: &[E::ScalarField], transcript: &mut Transcript) -> Self::Proof {
+        MLEvalProof::prove(poly, eval_point, self, transcript)
     }
-    fn verify(&self, crs: &Self::CRS, commitment: &Self::Commitment, proof: &Self::Proof, transcript: &mut Transcript) -> bool {
-        proof.verify(commitment, crs, transcript)
+    fn verify(&self, commitment: &Self::Commitment, proof: &Self::Proof, transcript: &mut Transcript) -> bool {
+        proof.verify(commitment, self, transcript)
     }
 }
 
