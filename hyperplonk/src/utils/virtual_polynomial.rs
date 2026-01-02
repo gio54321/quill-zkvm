@@ -139,6 +139,15 @@ impl<F: PrimeField> VirtualPolynomialStore<F> {
         }
     }
 
+    pub fn new_virtual_from_virtual(&mut self, v: &VirtualPolynomialRef) -> VirtualPolynomialRef {
+        let expr = self.virtual_polys[v.index].clone();
+        let index = self.virtual_polys.len();
+        self.virtual_polys.push(expr);
+        VirtualPolynomialRef {
+            index,
+        }
+    }
+
     /// Create a new virtual polynomial in the store that is identically zero
     pub fn new_virtual_zero(&mut self) -> VirtualPolynomialRef {
         let expr = VirtualPolyExpr::zero();
@@ -177,7 +186,7 @@ impl<F: PrimeField> VirtualPolynomialStore<F> {
 
     /// Replace the virtual polynomial referenced by f_index with the difference of itself and
     /// the input polynomial referenced by g_index
-    pub fn subtract_in_place(&mut self, f_index: &VirtualPolynomialRef, g_index: &VirtualPolynomialInputRef) {
+    pub fn sub_in_place(&mut self, f_index: &VirtualPolynomialRef, g_index: &VirtualPolynomialInputRef) {
         let f_expr = self.virtual_polys[f_index.index].clone();
         let g_expr = VirtualPolyExpr::Input(g_index.index);
         let neg_g_expr = VirtualPolyExpr::Mul(Box::new(VirtualPolyExpr::Const(F::from(-1i32))), Box::new(g_expr));
