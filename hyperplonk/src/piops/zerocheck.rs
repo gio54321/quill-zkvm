@@ -12,7 +12,7 @@ pub struct ZeroCheckProof<F: PrimeField> {
 }
 
 impl<F: PrimeField> ZeroCheckProof<F> {
-    pub fn prove(store: &mut VirtualPolynomialStore<F>, h: &VirtualPolynomialRef, transcript: &mut Transcript) -> Self {
+    pub fn prove(store: &mut VirtualPolynomialStore<F>, h: &VirtualPolynomialRef, transcript: &mut Transcript) -> (Self, EvaluationClaim<F>) {
         let num_vars = store.num_vars();
         let random_point = (0..num_vars).map(|_| transcript.draw_field_element::<F>()).collect::<Vec<F>>();
 
@@ -23,7 +23,7 @@ impl<F: PrimeField> ZeroCheckProof<F> {
         let h_hat = store.new_virtual_from_virtual(&h);
         store.mul_in_place(&h_hat, &eq_poly_index);
 
-        let sumcheck_proof = SumcheckProof::prove(
+        let (sumcheck_proof, sumcheck_evaluation_claim) = SumcheckProof::prove(
             num_vars,
             store,
             &h_hat,
@@ -31,10 +31,22 @@ impl<F: PrimeField> ZeroCheckProof<F> {
             transcript,
         );
 
-        Self {
+        let eq_eval = eq_eval(
+            &random_point,
+            &sumcheck_evaluation_claim.point,
+        );
+
+        let zerocheck_evaluation_claim = EvaluationClaim {
+            point: sumcheck_evaluation_claim.point,
+            // zerocheck_claimed_evaluation = sumcheck_claimed_evaluation / eq_eval
+            evaluation: sumcheck_evaluation_claim.evaluation / eq_eval,
+        };
+
+        (Self {
             num_vars,
             sumcheck_proof
-        }
+        },
+        zerocheck_evaluation_claim)
     }
 
     pub fn verify(&self, transcript: &mut Transcript) -> Result<EvaluationClaim<F>, String> {
@@ -105,7 +117,7 @@ mod tests {
         store.mul_in_place(&h, &g1_ref);
         store.sub_in_place(&h, &g2_ref);
 
-        let proof = ZeroCheckProof::prove(
+        let (proof, prover_evaluation_claim) = ZeroCheckProof::prove(
             &mut store,
             &h,
             &mut Transcript::new(b"zerocheck_test"),
@@ -114,6 +126,9 @@ mod tests {
         let evaluation_claim = proof.verify(
             &mut Transcript::new(b"zerocheck_test"),
         ).unwrap();
+
+        assert_eq!(evaluation_claim.evaluation, prover_evaluation_claim.evaluation, "Evaluation claim should match prover's claim");
+        assert_eq!(evaluation_claim.point, prover_evaluation_claim.point, "Evaluation point should match prover's point");
 
         let point = &evaluation_claim.point;
 
@@ -162,7 +177,7 @@ mod tests {
         store.mul_in_place(&h, &g1_ref);
         store.sub_in_place(&h, &g2_ref);
 
-        let proof = ZeroCheckProof::prove(
+        let (proof, _prover_evaluation_claim) = ZeroCheckProof::prove(
             &mut store,
             &h,
             &mut Transcript::new(b"zerocheck_test"),

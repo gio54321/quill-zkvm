@@ -24,12 +24,13 @@ impl<F: PrimeField> SumcheckProof<F> {
     /// that can be evaluated efficiently.
     /// 
     /// ASSUMES: the commitments to each g_i have already been incorporated into the transcript
-    pub fn prove(num_vars: usize, store: &VirtualPolynomialStore<F>, h: &VirtualPolynomialRef, claimed_sum: F, transcript: &mut Transcript) -> Self {
+    pub fn prove(num_vars: usize, store: &VirtualPolynomialStore<F>, h: &VirtualPolynomialRef, claimed_sum: F, transcript: &mut Transcript) -> (Self, EvaluationClaim<F>) {
         transcript.append_serializable(&num_vars);
         transcript.append_serializable(&claimed_sum);
 
         let mut output_r_polys : Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
         let mut evaluation_point : Vec<F> = Vec::with_capacity(num_vars);
+        let mut evaluation_claim = F::zero();
 
         // TODO: locally clone only the evaluations of the polynomials that appear in h
         // right now we clone all of them
@@ -77,13 +78,21 @@ impl<F: PrimeField> SumcheckProof<F> {
             }
 
             gs_local = new_gs_local;
+
+            if i == 0 {
+                let final_eval_claim = gs_local.iter().map(|g_evals| g_evals[0]).collect::<Vec<F>>();
+                evaluation_claim = store.evaluate_point(&final_eval_claim, &h);
+            }
         }
         
-        Self {
+        (Self {
             num_vars: num_vars,
             claimed_sum: claimed_sum,
             r_polys: output_r_polys,
-        }
+        }, EvaluationClaim {
+            point: evaluation_point,
+            evaluation: evaluation_claim,
+        })
     }
 
 
@@ -129,7 +138,7 @@ impl<F: PrimeField> SumcheckProof<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
-    use crate::utils::virtual_polynomial::{self, VirtualPolyExpr, VirtualPolynomialStore};
+    use crate::utils::virtual_polynomial::VirtualPolynomialStore;
 
     #[test]
     fn test_sumcheck_proof() {
@@ -164,21 +173,21 @@ mod tests {
 
         let claimed_sum: Fr = g1_evals.iter().zip(g2_evals.iter()).map(|(a,b)| *a * *b).sum();
 
-        
-        let proof = SumcheckProof::prove(
+        let (proof, prover_evaluation_claim) = SumcheckProof::prove(
             num_vars,
             &store,
             &virtual_poly,
             claimed_sum,
             &mut Transcript::new(b"sumcheck_test"),
         );
-
         let evaluation_claim = proof.verify(
             &mut Transcript::new(b"sumcheck_test"),
         ).unwrap();
 
-        let point = &evaluation_claim.point;
+        assert_eq!(evaluation_claim.evaluation, prover_evaluation_claim.evaluation, "Evaluation claim should match prover's claim");
+        assert_eq!(evaluation_claim.point, prover_evaluation_claim.point, "Evaluation point should match prover's point");
 
+        let point = &evaluation_claim.point;
 
         // check manually the evaluation claim
         let g1_at_r : Fr = point[0] + 
