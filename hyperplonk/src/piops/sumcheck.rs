@@ -127,11 +127,8 @@ impl<F: PrimeField> SumcheckProof<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::virtual_polynomial::VirtualPolyExpr;
-
     use super::*;
     use ark_bn254::Fr;
-    use ark_std::One;
 
     #[test]
     fn test_sumcheck_proof() {

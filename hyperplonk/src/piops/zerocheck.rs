@@ -1,10 +1,9 @@
 use ark_ff::PrimeField;
-use ark_std::Zero;
 use quill_transcript::transcript::Transcript;
 use crate::piops::EvaluationClaim;
 use crate::piops::sumcheck::SumcheckProof;
 use crate::utils::virtual_polynomial::VirtualPolynomial;
-use crate::utils::eq_eval::{self, eq_eval, fast_eq_eval_hypercube};
+use crate::utils::eq_eval::{eq_eval, fast_eq_eval_hypercube};
 
 
 pub struct ZeroCheckProof<F: PrimeField> {
@@ -68,14 +67,12 @@ impl<F: PrimeField> ZeroCheckProof<F> {
     }
 }
 
-
+#[cfg(test)]
 mod tests {
-    use crate::utils::virtual_polynomial::VirtualPolyExpr;
-
     use super::*;
     use ark_bn254::Fr;
-    use ark_std::One;
-    use ark_poly::{DenseMultilinearExtension, Polynomial};
+    use ark_std::{Zero, One};
+    use ark_poly::{Polynomial, DenseMultilinearExtension};
 
     #[test]
     fn test_zerocheck_proof() {
