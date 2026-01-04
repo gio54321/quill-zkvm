@@ -180,6 +180,11 @@ impl<E: Pairing> MultilinearPCS<E::ScalarField> for KZG<E> {
         let mut rng = rand::thread_rng();
         KZG::<E>::trusted_setup(degree, &mut rng)
     }
+
+    fn max_degree(&self) -> usize {
+        self.max_degree
+    }
+
     fn commit(&self, poly: &[E::ScalarField]) -> Self::Commitment {
         self.commit(poly)
     }

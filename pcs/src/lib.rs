@@ -17,6 +17,7 @@ pub trait MultilinearPCS<F: PrimeField> {
     type Proof: Sized + MultilinearPCSProof<F>;
 
     fn trusted_setup(degree: usize) -> Self::CRS;
+    fn max_degree(&self) -> usize;
     fn commit(&self, poly: &[F]) -> Self::Commitment;
     fn open(&self, poly: &[F], eval_point: &[F], transcript: &mut Transcript) -> Self::Proof;
     fn verify(
