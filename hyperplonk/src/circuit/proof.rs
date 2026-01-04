@@ -1,3 +1,5 @@
+use std::iter::zip;
+
 use crate::{
     piops::{permutation_check::PermutationCheckProof, zerocheck::ZeroCheckProof},
     utils::virtual_polynomial::{
@@ -191,13 +193,17 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         // batch together all constraints into a single zero-check expression
         let zero_check_exprs = self.circuit.zero_check_expressions();
         let alpha = transcript.draw_field_element::<F>();
+
+        let alpha_powers = (0..zero_check_exprs.len())
+            .map(|i| alpha.pow(&[i as u64]))
+            .collect::<Vec<F>>();
         let mut zero_check_expr = VirtualPolyExpr::Const(F::zero());
-        for expr in zero_check_exprs {
+        for (expr, alpha) in zip(zero_check_exprs, alpha_powers) {
             zero_check_expr = VirtualPolyExpr::Add(
                 Box::new(zero_check_expr),
                 Box::new(VirtualPolyExpr::Mul(
                     Box::new(VirtualPolyExpr::Const(alpha)),
-                    Box::new(expr),
+                    Box::new(expr.clone()),
                 )),
             );
         }
