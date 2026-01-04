@@ -14,18 +14,17 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> PermutationCheckProof<F, PCS> {
         store: &mut VirtualPolynomialStore<F>,
         h_left: &VirtualPolynomialRef,
         h_right: &VirtualPolynomialRef,
+        id_indices: &Vec<F>,
         permutation_indices: &Vec<F>,
         transcript: &mut Transcript,
         pcs: &PCS,
     ) -> (Self, Vec<F>) {
         let num_vars = store.num_vars();
 
-        // compute the id and permutation polynomials
-        let id_poly_evals = (0..1 << num_vars).map(|i| F::from(i)).collect::<Vec<_>>();
-
+        assert_eq!(id_indices.len(), 1 << num_vars);
         assert_eq!(permutation_indices.len(), 1 << num_vars);
 
-        let id_ref = store.allocate_polynomial(&id_poly_evals);
+        let id_ref = store.allocate_polynomial(&id_indices);
         let perm_ref = store.allocate_polynomial(permutation_indices);
 
         let alpha = transcript.draw_field_element::<F>();
@@ -123,6 +122,11 @@ mod tests {
             vec
         };
 
+        let id_indices_field = id_coeffs
+            .iter()
+            .map(|&idx| Fr::from(idx as u64))
+            .collect::<Vec<Fr>>();
+
         let permuted_indices_field = permuted_indices
             .iter()
             .map(|&idx| Fr::from(idx as u64))
@@ -143,6 +147,7 @@ mod tests {
             &mut store,
             &h_left_virtual,
             &h_right_virtual,
+            &id_indices_field,
             &permuted_indices_field,
             &mut transcript,
             &pcs,
@@ -234,6 +239,11 @@ mod tests {
         // the multiset equality however still holds
         (permuted_coeffs[0], permuted_coeffs[1]) = (permuted_coeffs[1], permuted_coeffs[0]);
 
+        let id_indices_field = id_coeffs
+            .iter()
+            .map(|&idx| Fr::from(idx as u64))
+            .collect::<Vec<Fr>>();
+
         let permuted_indices_field = permuted_indices
             .iter()
             .map(|&idx| Fr::from(idx as u64))
@@ -254,6 +264,7 @@ mod tests {
             &mut store,
             &h_left_virtual,
             &h_right_virtual,
+            &id_indices_field,
             &permuted_indices_field,
             &mut transcript,
             &pcs,
