@@ -17,6 +17,26 @@ pub enum VirtualPolyExpr<F: PrimeField> {
     Mul(Box<VirtualPolyExpr<F>>, Box<VirtualPolyExpr<F>>),
 }
 
+impl<F: PrimeField> VirtualPolyExpr<F> {
+    /// Evaluate the virtual polynomial expression at a given point
+    pub fn evaluate(&self, g_evals: &Vec<F>) -> F {
+        match self {
+            VirtualPolyExpr::Input(i) => g_evals[*i],
+            VirtualPolyExpr::Const(c) => *c,
+            VirtualPolyExpr::Add(left, right) => {
+                let left_val = left.evaluate(g_evals);
+                let right_val = right.evaluate(g_evals);
+                left_val + right_val
+            }
+            VirtualPolyExpr::Mul(left, right) => {
+                let left_val = left.evaluate(g_evals);
+                let right_val = right.evaluate(g_evals);
+                left_val * right_val
+            }
+        }
+    }
+}
+
 impl<F: PrimeField> core::fmt::Display for VirtualPolyExpr<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -89,6 +109,12 @@ pub struct VirtualPolynomialInputRef {
 
 impl VirtualPolynomialInputRef {
     pub fn to_expr<F: PrimeField>(&self) -> VirtualPolyExpr<F> {
+        VirtualPolyExpr::Input(self.index)
+    }
+}
+
+impl<F: PrimeField> Into<VirtualPolyExpr<F>> for VirtualPolynomialInputRef {
+    fn into(self) -> VirtualPolyExpr<F> {
         VirtualPolyExpr::Input(self.index)
     }
 }
@@ -301,24 +327,7 @@ impl<F: PrimeField> VirtualPolynomialStore<F> {
             "Incorrect number of input polynomial evaluations provided for evaluation"
         );
         let expr = &self.virtual_polys[virtual_index.index];
-        self.evaluate_expr(expr, g_evals)
-    }
-
-    fn evaluate_expr(&self, expr: &VirtualPolyExpr<F>, g_evals: &Vec<F>) -> F {
-        match expr {
-            VirtualPolyExpr::Input(i) => g_evals[*i],
-            VirtualPolyExpr::Const(c) => *c,
-            VirtualPolyExpr::Add(left, right) => {
-                let left_val = self.evaluate_expr(left, &g_evals);
-                let right_val = self.evaluate_expr(right, &g_evals);
-                left_val + right_val
-            }
-            VirtualPolyExpr::Mul(left, right) => {
-                let left_val = self.evaluate_expr(left, &g_evals);
-                let right_val = self.evaluate_expr(right, &g_evals);
-                left_val * right_val
-            }
-        }
+        expr.evaluate(g_evals)
     }
 
     pub fn get_input_poly_evaluations(
