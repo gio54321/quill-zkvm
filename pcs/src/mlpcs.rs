@@ -86,7 +86,6 @@ impl<E: Pairing> MLEvalProof<E> {
         kzg: &super::kzg::KZG<E>,
         transcript: &mut Transcript,
     ) -> Self {
-
         assert_eq!(
             poly.len(),
             1 << eval_point.len(),
@@ -356,7 +355,7 @@ mod tests {
         assert!(proof.verify(&commitment, &kzg, &mut transcript));
     }
 
-        #[test]
+    #[test]
     fn test_mlpcs_zero_one_opening() {
         let num_vars = 3;
         let mut rng = test_rng();
@@ -392,5 +391,4 @@ mod tests {
         );
         assert!(proof.verify(&commitment, &kzg, &mut transcript));
     }
-
 }
