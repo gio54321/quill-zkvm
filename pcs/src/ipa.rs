@@ -122,7 +122,7 @@ impl<E: Pairing> InnerProductProof<E> {
         poly1_coeffs.resize(max_len, E::ScalarField::zero());
         poly2_coeffs.resize(max_len, E::ScalarField::zero());
         assert_eq!(poly1_coeffs.len(), poly2_coeffs.len(), "Padded polynomials must have the same degree");
-        
+
         let poly1 = DensePolynomial::from_coefficients_vec(poly1_coeffs.clone());
         let poly2 = DensePolynomial::from_coefficients_vec(poly2_coeffs.clone());
         let poly1_rev = DensePolynomial::from_coefficients_slice(
@@ -135,7 +135,10 @@ impl<E: Pairing> InnerProductProof<E> {
         //TODO: use FFTs here for efficiency, now we are doing naive multiplication which is O(n^2)
         let h_poly = &(&poly1 * &poly2_rev) + &(&poly1_rev * &poly2);
 
-        let h_coeffs = &h_poly.coeffs;
+        let mut h_coeffs = h_poly.coeffs;
+
+        // pad so that high degree zero coefficients are explicitly present
+        h_coeffs.resize(2 * max_len - 1, E::ScalarField::zero());
         let s_coeffs: &[<E as Pairing>::ScalarField] = &h_coeffs[(h_coeffs.len() / 2 + 1)..];
 
         DensePolynomial::from_coefficients_slice(s_coeffs)

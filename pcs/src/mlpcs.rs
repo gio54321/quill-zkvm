@@ -356,4 +356,41 @@ mod tests {
         assert!(proof.verify(&commitment, &kzg, &mut transcript));
     }
 
+        #[test]
+    fn test_mlpcs_zero_one_opening() {
+        let num_vars = 3;
+        let mut rng = test_rng();
+
+        // generate a random multilinear polynomial
+        let poly_size = 1 << num_vars;
+        let poly: Vec<Fr> = (0..poly_size).map(|_| Fr::rand(&mut rng)).collect();
+
+        println!("Polynomial coeffs: {:?}", poly);
+
+        // setup KZG
+        let kzg = kzg::KZG::<Bn254>::trusted_setup(poly_size, &mut rng);
+
+        // --- PROVER ---
+        let mut transcript = Transcript::new(b"MLPCS Zero Opening Test");
+
+        // commit to the polynomial
+        let commitment = kzg.commit(&poly);
+
+        // prove opening at zero point
+        let eval_point: Vec<Fr> = vec![Fr::zero(), Fr::one(), Fr::zero()];
+        let proof = MLEvalProof::<Bn254>::prove(&poly, &eval_point, &kzg, &mut transcript);
+
+        // --- VERIFIER ---
+        let mut transcript = Transcript::new(b"MLPCS Zero Opening Test");
+        // reconstruct the commitment in the transcript
+
+        // get the evaluation point and claimed evaluation in the transcript
+
+        assert!(
+            eval_point == proof.evaluation_point,
+            "Evaluation points do not match"
+        );
+        assert!(proof.verify(&commitment, &kzg, &mut transcript));
+    }
+
 }
