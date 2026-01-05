@@ -393,7 +393,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
 
 #[cfg(test)]
 mod tests {
-    use crate::circuit::transition_circuit::TransitionCircuit;
+    use crate::frontend::transition_circuit::TransitionCircuit;
 
     use super::*;
     use ark_bn254;
