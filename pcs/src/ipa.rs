@@ -115,20 +115,28 @@ impl<E: Pairing> InnerProductProof<E> {
         poly1: &[E::ScalarField],
         poly2: &[E::ScalarField],
     ) -> DensePolynomial<E::ScalarField> {
-        let poly1 = DensePolynomial::from_coefficients_slice(poly1);
-        let poly2 = DensePolynomial::from_coefficients_slice(poly2);
+        // pad polynomials to the same degree
+        let max_len = std::cmp::max(poly1.len(), poly2.len());
+        let mut poly1_coeffs = poly1.to_vec();
+        let mut poly2_coeffs = poly2.to_vec();
+        poly1_coeffs.resize(max_len, E::ScalarField::zero());
+        poly2_coeffs.resize(max_len, E::ScalarField::zero());
+        assert_eq!(poly1_coeffs.len(), poly2_coeffs.len(), "Padded polynomials must have the same degree");
+        
+        let poly1 = DensePolynomial::from_coefficients_vec(poly1_coeffs.clone());
+        let poly2 = DensePolynomial::from_coefficients_vec(poly2_coeffs.clone());
         let poly1_rev = DensePolynomial::from_coefficients_slice(
-            &poly1.coeffs.iter().rev().cloned().collect::<Vec<_>>(),
+            &&poly1_coeffs.iter().rev().cloned().collect::<Vec<_>>(),
         );
         let poly2_rev = DensePolynomial::from_coefficients_slice(
-            &poly2.coeffs.iter().rev().cloned().collect::<Vec<_>>(),
+            &poly2_coeffs.iter().rev().cloned().collect::<Vec<_>>(),
         );
 
         //TODO: use FFTs here for efficiency, now we are doing naive multiplication which is O(n^2)
         let h_poly = &(&poly1 * &poly2_rev) + &(&poly1_rev * &poly2);
 
         let h_coeffs = &h_poly.coeffs;
-        let s_coeffs = &h_coeffs[(h_coeffs.len() / 2 + 1)..];
+        let s_coeffs: &[<E as Pairing>::ScalarField] = &h_coeffs[(h_coeffs.len() / 2 + 1)..];
 
         DensePolynomial::from_coefficients_slice(s_coeffs)
     }

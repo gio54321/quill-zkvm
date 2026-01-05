@@ -86,6 +86,13 @@ impl<E: Pairing> MLEvalProof<E> {
         kzg: &super::kzg::KZG<E>,
         transcript: &mut Transcript,
     ) -> Self {
+
+        assert_eq!(
+            poly.len(),
+            1 << eval_point.len(),
+            "Polynomial length does not match evaluation point length"
+        );
+
         // the first thing to do is to evaluate the polynomial at the given point
         let pr = Self::compute_pr(eval_point);
         let mut evaluation = E::ScalarField::zero();
@@ -311,4 +318,42 @@ mod tests {
         );
         assert!(!wrong_proof.verify(&commitment, &kzg, &mut transcript));
     }
+
+    #[test]
+    fn test_mlpcs_zero_opening() {
+        let num_vars = 3;
+        let mut rng = test_rng();
+
+        // generate a random multilinear polynomial
+        let poly_size = 1 << num_vars;
+        let poly: Vec<Fr> = (0..poly_size).map(|_| Fr::rand(&mut rng)).collect();
+
+        println!("Polynomial coeffs: {:?}", poly);
+
+        // setup KZG
+        let kzg = kzg::KZG::<Bn254>::trusted_setup(poly_size, &mut rng);
+
+        // --- PROVER ---
+        let mut transcript = Transcript::new(b"MLPCS Zero Opening Test");
+
+        // commit to the polynomial
+        let commitment = kzg.commit(&poly);
+
+        // prove opening at zero point
+        let eval_point: Vec<Fr> = vec![Fr::zero(); num_vars];
+        let proof = MLEvalProof::<Bn254>::prove(&poly, &eval_point, &kzg, &mut transcript);
+
+        // --- VERIFIER ---
+        let mut transcript = Transcript::new(b"MLPCS Zero Opening Test");
+        // reconstruct the commitment in the transcript
+
+        // get the evaluation point and claimed evaluation in the transcript
+
+        assert!(
+            eval_point == proof.evaluation_point,
+            "Evaluation points do not match"
+        );
+        assert!(proof.verify(&commitment, &kzg, &mut transcript));
+    }
+
 }
