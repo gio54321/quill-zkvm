@@ -49,6 +49,7 @@ pub struct HyperPlonk<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<
     pub id_poly: Vec<F>,
     pub permutation_poly: Vec<F>,
     pub circuit: C,
+    pub preprocessed_values: Vec<Vec<F>>,
     pub _marker: std::marker::PhantomData<(F, PCS)>,
 }
 
@@ -65,7 +66,7 @@ pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
 
 #[derive(Clone)]
 pub struct HyperPlonkVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
-    pub padded_num_cols: usize,
+    pub num_cols: usize,
     pub num_rows: usize,
     pub circuit: C,
     pub preprocessed_columns_commitments: Vec<PCS::Commitment>,
@@ -79,41 +80,54 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             circuit.num_rows().is_power_of_two(),
             "Number of rows must be a power of two"
         );
-        let height = circuit.num_rows();
-
-        // find the real trace width for witness columns
-        let concrete_width = circuit.num_cols().next_power_of_two();
-
-        let trace_num_vars = concrete_width * height;
-
         assert!(
-            trace_num_vars.is_power_of_two(),
-            "Total number of columns (witness + preprocessed) must be a power of two"
-        );
-        assert!(
-            pcs.max_degree() == trace_num_vars,
-            "PCS max degree must match the total number of columns"
+            circuit.num_cols().is_power_of_two(),
+            "Number of columns must be a power of two"
         );
 
+        let trace_num_vars = circuit.num_rows().trailing_zeros() as usize
+            + circuit.num_cols().trailing_zeros() as usize;
+
+        assert!(
+            pcs.max_degree() == 1 << trace_num_vars,
+            "PCS max degree mismatch"
+        );
+
+        // pad the preprocessed columns to the full trace size with zeros and commit to them
         let mut preprocessed_values = circuit.preprocessed_values();
+        for i in 0..preprocessed_values.len() {
+            assert_eq!(
+                preprocessed_values[i].len(),
+                circuit.num_rows(),
+                "Preprocessed column length mismatch"
+            );
+            preprocessed_values[i].extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
+        }
+
         let preprocessed_commitments = preprocessed_values
-            .iter_mut()
-            .map(|col| {
-                // pad each preprocessed column to the max poly degree
-                col.extend(vec![F::zero(); trace_num_vars - col.len()]);
-                // commit to the preprocessed column
-                pcs.commit(col)
-            })
+            .iter()
+            .map(|col| pcs.commit(col))
             .collect::<Vec<_>>();
 
         // commit to the identity and permutation polynomials
         let (id_evals, permutation_evals) = circuit.permutation();
 
+        assert_eq!(
+            id_evals.len(),
+            1 << trace_num_vars,
+            "ID polynomial length mismatch"
+        );
+        assert_eq!(
+            permutation_evals.len(),
+            1 << trace_num_vars,
+            "Permutation polynomial length mismatch"
+        );
+
         let id_commitment = pcs.commit(&id_evals);
         let permutation_commitment = pcs.commit(&permutation_evals);
 
         let vk = HyperPlonkVK {
-            padded_num_cols: concrete_width,
+            num_cols: circuit.num_cols(),
             num_rows: circuit.num_rows(),
             circuit: circuit.clone(),
             preprocessed_columns_commitments: preprocessed_commitments,
@@ -125,12 +139,13 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             circuit,
             id_poly: id_evals,
             permutation_poly: permutation_evals,
+            preprocessed_values,
             _marker: std::marker::PhantomData,
         }
     }
 
     pub fn prove(&self, pcs: &PCS, witness: &Vec<Vec<F>>) -> HyperPlonkProof<F, PCS> {
-        // construct the full padded witness
+        // assert that the witness has the correct shape
         assert_eq!(
             witness.len(),
             self.circuit.num_cols(),
@@ -146,48 +161,25 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
 
         // first of all, do a sanity check that the witness satisfies the circuit constraints
         self.circuit.check_constraints(witness).unwrap();
+
         let num_rows = self.circuit.num_rows();
 
-        let mut padded_witness = witness.iter().flatten().cloned().collect::<Vec<F>>();
-        let pad_cols = self.circuit.num_cols().next_power_of_two() - self.circuit.num_cols();
-        let padding_length = pad_cols * self.circuit.num_rows();
-        padded_witness.extend(vec![F::zero(); padding_length]);
+        let full_witness = witness.iter().flatten().cloned().collect::<Vec<F>>();
 
         assert_eq!(
-            padded_witness.len(),
-            self.circuit.num_cols().next_power_of_two() * num_rows,
+            full_witness.len(),
+            self.circuit.num_cols() * self.circuit.num_rows(),
             "Padded witness length mismatch"
         );
 
         let log2_rows = num_rows.trailing_zeros() as usize;
-        let log2_padded_cols =
-            (self.circuit.num_cols().next_power_of_two()).trailing_zeros() as usize;
+        let log2_cols = self.circuit.num_cols().trailing_zeros() as usize;
 
-        let padded_witness_poly = DenseMultilinearExtension::from_evaluations_slice(
-            log2_rows + log2_padded_cols,
-            &padded_witness,
-        );
-
-        // sanity check: evaluate the padded witness poly at all points and compare with the original evaluations
-        for col in 0..(1 << log2_padded_cols) {
-            for row in 0..(1 << log2_rows) {
-                // point = (x_bits, y_bits)
-                let mut point = vec![];
-                for i in 0..log2_rows {
-                    point.push(F::from(((row >> i) & 1) as u64));
-                }
-                for i in 0..log2_padded_cols {
-                    point.push(F::from(((col >> i) & 1) as u64));
-                }
-                let eval = padded_witness_poly.evaluate(&point);
-                let original_eval = witness[col][row];
-                assert_eq!(eval, original_eval, "Padded witness evaluation mismatch");
-            }
-        }
-
+        // initialize a new transcript
         let mut transcript = Transcript::new(b"hyperplonk_proof");
 
-        let witness_commitment = pcs.commit(&padded_witness);
+        // the prover commits to the full witness polynomial
+        let witness_commitment = pcs.commit(&full_witness);
         transcript.append_serializable(&witness_commitment);
 
         // HACK: it is implicitly assumed that the allocated polys have
@@ -201,7 +193,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             poly_store.allocate_polynomial(&preprocessed);
         }
 
-        // batch together all constraints into a single zero-check expression
+        // batch together all constraints into a single expression using a random alpha
         let zero_check_exprs = self.circuit.zero_check_expressions();
         let alpha = transcript.draw_field_element::<F>();
 
@@ -213,15 +205,15 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             zero_check_expr = zero_check_expr + VirtualPolyExpr::Const(alpha) * expr;
         }
 
+        // prove the zero-check relation
         let zero_check_virtual = poly_store.new_virtual_from_expr(zero_check_expr);
-
         let (zero_check_proof, zero_check_eval_claim) =
             ZeroCheckProof::prove(&mut poly_store, &zero_check_virtual, &mut transcript);
 
         // construct a new polynomial store for the permutation check
         // this check is done on the whole trace at once, without separating the columns
-        let mut poly_store2 = VirtualPolynomialStore::new(log2_rows + log2_padded_cols);
-        let witness_idx = poly_store2.allocate_polynomial(&padded_witness);
+        let mut poly_store2 = VirtualPolynomialStore::new(log2_rows + log2_cols);
+        let witness_idx = poly_store2.allocate_polynomial(&full_witness);
         let witness_virtual = poly_store2.new_virtual_from_input(&witness_idx);
 
         let (permutation_check_proof, permutation_check_claim) = PermutationCheckProof::prove(
@@ -234,24 +226,31 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             pcs,
         );
 
-        // compute openings
+        // compute openings for the witness polynomial at the zero-check evaluation point
         let mut openings_zero_check = vec![];
         for col in 0..self.circuit.num_cols() {
             let mut point = zero_check_eval_claim.point.clone();
-            for i in (0..log2_padded_cols).rev() {
+            for i in (0..log2_cols).rev() {
                 point.push(F::from(((col >> i) & 1) as u64));
             }
-            let opening = pcs.open(&padded_witness, &point, &mut transcript);
+            let opening = pcs.open(&full_witness, &point, &mut transcript);
             openings_zero_check.push(opening);
         }
 
+        // compute openings for the preprocessed columns at the zero-check evaluation point
+        // this is not strictly necessary, but it saves some work to the verifier
         let preprocessed_columns = self.circuit.preprocessed_values();
         let mut openings_preprocessed = vec![];
         for i in 0..self.circuit.num_preprocessed_columns() {
-            let opening = pcs.open(&preprocessed_columns[i], &zero_check_eval_claim.point, &mut transcript);
+            let opening = pcs.open(
+                &preprocessed_columns[i],
+                &zero_check_eval_claim.point,
+                &mut transcript,
+            );
             openings_preprocessed.push(opening);
         }
 
+        // compute openings for the id and permutation polynomials at the permutation check evaluation point
         let opening_id = pcs.open(&self.id_poly, &permutation_check_claim, &mut transcript);
         let opening_permutation = pcs.open(
             &self.permutation_poly,
@@ -259,7 +258,8 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             &mut transcript,
         );
         let opening_permutation_trace =
-            pcs.open(&padded_witness, &permutation_check_claim, &mut transcript);
+            pcs.open(&full_witness, &permutation_check_claim, &mut transcript);
+        
         HyperPlonkProof {
             witness_commitment,
             zero_check_proof,
@@ -286,7 +286,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         let alpha = transcript.draw_field_element::<F>();
 
         let zero_check_eval_claim = self.zero_check_proof.verify(&mut transcript)?;
-        let log2_padded_cols = (vk.padded_num_cols).trailing_zeros() as usize;
+        let log2_cols = (vk.num_cols).trailing_zeros() as usize;
 
         let id_evaluation_claim = EvaluationClaim {
             point: self.opening_id.evaluation_point(),
@@ -315,7 +315,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         let mut points = vec![];
         for col in 0..vk.circuit.num_cols() {
             let mut point = zero_check_eval_claim.point.clone();
-            for i in (0..log2_padded_cols).rev() {
+            for i in (0..log2_cols).rev() {
                 point.push(F::from(((col >> i) & 1) as u64));
             }
             points.push(point);
@@ -342,13 +342,16 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
                 return Err("Preprocessed opening point mismatch".to_string());
             }
 
-            let valid = pcs.verify(&vk.preprocessed_columns_commitments[i], opening, &mut transcript);
+            let valid = pcs.verify(
+                &vk.preprocessed_columns_commitments[i],
+                opening,
+                &mut transcript,
+            );
             if !valid {
                 return Err("Preprocessed opening verification failed".to_string());
             }
             col_evaluations.push(opening.claimed_evaluation());
         }
-
 
         // check that the zero-check reduced evaluation match the computed one
         let mut recomputed_zero_check_evaluation = F::zero();
