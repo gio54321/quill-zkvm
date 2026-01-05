@@ -2,12 +2,9 @@ use std::iter::zip;
 
 use crate::{
     piops::{permutation_check::PermutationCheckProof, zerocheck::ZeroCheckProof, EvaluationClaim},
-    utils::virtual_polynomial::{
-        VirtualPolyExpr, VirtualPolynomialInputRef, VirtualPolynomialStore,
-    },
+    utils::virtual_polynomial::{VirtualPolyExpr, VirtualPolynomialStore},
 };
 use ark_ff::PrimeField;
-use ark_poly::{DenseMultilinearExtension, Polynomial};
 use quill_pcs::{MultilinearPCS, MultilinearPCSProof};
 use quill_transcript::transcript::Transcript;
 
@@ -101,7 +98,8 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
                 circuit.num_rows(),
                 "Preprocessed column length mismatch"
             );
-            preprocessed_values[i].extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
+            preprocessed_values[i]
+                .extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
         }
 
         let preprocessed_commitments = preprocessed_values
@@ -259,7 +257,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         );
         let opening_permutation_trace =
             pcs.open(&full_witness, &permutation_check_claim, &mut transcript);
-        
+
         HyperPlonkProof {
             witness_commitment,
             zero_check_proof,
@@ -401,12 +399,9 @@ mod tests {
     use ark_bn254;
     use ark_bn254::Fr;
     use ark_ff::UniformRand;
-    use ark_ff::{AdditiveGroup, Field};
     use ark_std::test_rng;
     use ark_std::Zero;
     use quill_pcs::kzg::KZG;
-    use quill_transcript::transcript;
-    use rand::RngCore;
     use rand::SeedableRng;
 
     #[test]

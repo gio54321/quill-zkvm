@@ -1,6 +1,5 @@
 use crate::{circuit::proof::Circuit, utils::virtual_polynomial::VirtualPolyExpr};
 use ark_ff::PrimeField;
-use ark_std::Zero;
 
 /// A target in the circuit: a specific cell in the witness matrix.
 #[derive(Clone)]
