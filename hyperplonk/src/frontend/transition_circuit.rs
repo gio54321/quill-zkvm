@@ -1,4 +1,4 @@
-use crate::{circuit::proof::Circuit, utils::virtual_polynomial::VirtualPolyExpr};
+use crate::{proof::proof::Circuit, utils::virtual_polynomial::VirtualPolyExpr};
 use ark_ff::PrimeField;
 
 /// A target in the circuit: a specific cell in the witness matrix.
