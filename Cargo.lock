@@ -381,6 +381,7 @@ dependencies = [
  "ark-std",
  "quill_pcs",
  "quill_transcript",
+ "rand",
 ]
 
 [[package]]

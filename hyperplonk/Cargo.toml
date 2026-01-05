@@ -12,3 +12,4 @@ edition.workspace = true
 "ark-serialize" = "0.5.0"
 "quill_transcript" = { path = "../transcript" }
 "quill_pcs" = { path = "../pcs" }
+"rand" = "0.8.5"

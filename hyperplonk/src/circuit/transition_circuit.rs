@@ -5,13 +5,13 @@ use ark_std::Zero;
 /// A target in the circuit: a specific cell in the witness matrix.
 #[derive(Clone)]
 pub struct TransitionCircuitTarget {
-    pub row: usize,
+    pub col: usize,
 }
 
 impl TransitionCircuitTarget {
     /// Create a new TransitionCircuitTarget
     pub fn to_expr<F: PrimeField>(&self) -> VirtualPolyExpr<F> {
-        VirtualPolyExpr::Input(self.row)
+        VirtualPolyExpr::Input(self.col)
     }
 }
 
@@ -49,7 +49,7 @@ impl<F: PrimeField> TransitionCircuit<F> {
     pub fn allocate_witness_cell(&mut self) -> TransitionCircuitTarget {
         let index = self.num_columns;
         self.num_columns += 1;
-        TransitionCircuitTarget { row: index }
+        TransitionCircuitTarget { col: index }
     }
 
     /// Allocate a cell that is a "state", returns both the current state cella and the next state cell
@@ -117,22 +117,69 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
         constraints
     }
 
-    fn permutation(&self) -> Vec<usize> {
+    fn permutation(&self) -> (Vec<F>, Vec<F>) {
         // Build the permutation mapping, we need to construct a permutation mapping for each state cell
         // for each row i in 0..num_rows-1, we map (current_state_cell, i) -> (next_state_cell, i+1)
         // and back (next_state_cell, i+1) -> (current_state_cell, i)
 
-        let mut permutation = vec![0; self.num_rows() * self.num_cols()];
+        let num_cells = self.num_rows() * self.num_cols();
+        assert!(num_cells.is_power_of_two());
+        let id_mapping = (0..num_cells)
+            .map(|i| F::from(i as u64))
+            .collect::<Vec<F>>();
+
+        let mut permutation_mapping = id_mapping.clone();
         for state_cell in &self.state_cells {
-            let current_index = state_cell.current.row;
-            let next_index = state_cell.next.row;
+            let current_index = state_cell.current.col;
+            let next_index = state_cell.next.col;
             for row in 0..(self.num_rows() - 1) {
-                let from = current_index * self.num_rows() + row;
-                let to = next_index * self.num_rows() + (row + 1);
-                permutation[from] = to;
-                permutation[to] = from;
+                let from = next_index * self.num_rows() + row;
+                let to = current_index * self.num_rows() + (row + 1);
+                permutation_mapping[from] = F::from(to as u64);
+                permutation_mapping[to] = F::from(from as u64);
             }
         }
-        permutation
+        (id_mapping, permutation_mapping)
+    }
+
+    fn check_constraints(&self, witness: &Vec<Vec<F>>) -> Result<(), String> {
+        // Check that the witness satisfies all the constraints
+        for row in 0..self.num_rows() {
+            // Recurring constraints
+            let row_values = witness.iter().map(|col| col[row]).collect::<Vec<F>>();
+            for constraint in &self.recurring_constraints {
+                let eval = constraint.evaluate(&row_values);
+                if eval != F::zero() {
+                    return Err(
+                    format!(
+                        "Recurring constraint {} not satisfied at row {}: {:?} != 0\n row values: {:?}",
+                        constraint,
+                        row,
+                        eval,
+                        row_values
+                    )
+                );
+                }
+            }
+        }
+
+        // check permutation constraints
+        for state_cell in &self.state_cells {
+            for row in 0..(self.num_rows() - 1) {
+                let current_value = witness[state_cell.next.col][row];
+                let next_value = witness[state_cell.current.col][row + 1];
+                if current_value != next_value {
+                    return Err(
+                        format!(
+                            "Permutation constraint not satisfied for state cell at row {}: current value {:?} != next value {:?}",
+                            row,
+                            current_value,
+                            next_value
+                        )
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }
