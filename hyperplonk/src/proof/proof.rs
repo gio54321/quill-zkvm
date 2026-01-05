@@ -1,5 +1,4 @@
-use std::iter::zip;
-
+use crate::proof::circuit::Circuit;
 use crate::{
     piops::{permutation_check::PermutationCheckProof, zerocheck::ZeroCheckProof, EvaluationClaim},
     utils::virtual_polynomial::{VirtualPolyExpr, VirtualPolynomialStore},
@@ -7,39 +6,7 @@ use crate::{
 use ark_ff::PrimeField;
 use quill_pcs::{MultilinearPCS, MultilinearPCSProof};
 use quill_transcript::transcript::Transcript;
-
-// A trait representing a general circuit
-pub trait Circuit<F: PrimeField> {
-    /// Number of rows in the circuit's trace
-    /// Must be a power of two
-    fn num_rows(&self) -> usize;
-
-    /// Number of witness columns in the circuit's trace
-    /// Must be a power of two
-    fn num_cols(&self) -> usize;
-
-    /// Number of preprocessed columns (fixed by the circuit description)
-    fn num_preprocessed_columns(&self) -> usize;
-
-    /// Preprocessed values for the preprocessed columns.
-    /// Must return a vector of length `num_preprocessed_columns()`,
-    /// each containing a vector of length `num_rows()`.
-    fn preprocessed_values(&self) -> Vec<Vec<F>>;
-
-    /// Constraint expression that is enforced to be zero for every row, given
-    /// the columns reference indices.
-    /// All equations are checked to hold over each row of the trace.
-    /// ASSUMES: the input allocation is as follows: input indices 0..num_cols()
-    /// refer to the witness columns, while input indices
-    /// num_cols()..num_cols()+num_preprocessed_columns() refer to the preprocessed columns.
-    fn zero_check_expressions(&self) -> Vec<VirtualPolyExpr<F>>;
-
-    /// Permutation mapping for the trace cells
-    /// must return both the id mapping and the permutation mapping
-    fn permutation(&self) -> (Vec<F>, Vec<F>);
-
-    fn check_constraints(&self, witness: &Vec<Vec<F>>) -> Result<(), String>;
-}
+use std::iter::zip;
 
 pub struct HyperPlonk<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> {
     pub vk: HyperPlonkVK<F, PCS, C>,
