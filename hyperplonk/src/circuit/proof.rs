@@ -245,9 +245,10 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             openings_zero_check.push(opening);
         }
 
+        let preprocessed_columns = self.circuit.preprocessed_values();
         let mut openings_preprocessed = vec![];
-        for _ in 0..self.circuit.num_preprocessed_columns() {
-            let opening = pcs.open(&padded_witness, &zero_check_eval_claim.point, &mut transcript);
+        for i in 0..self.circuit.num_preprocessed_columns() {
+            let opening = pcs.open(&preprocessed_columns[i], &zero_check_eval_claim.point, &mut transcript);
             openings_preprocessed.push(opening);
         }
 
@@ -336,28 +337,18 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // check preprocessed openings
-        for opening in &self.openings_preprocessed {
+        for (i, opening) in self.openings_preprocessed.iter().enumerate() {
             if opening.evaluation_point() != zero_check_eval_claim.point {
                 return Err("Preprocessed opening point mismatch".to_string());
             }
 
-            let valid = pcs.verify(&self.witness_commitment, opening, &mut transcript);
+            let valid = pcs.verify(&vk.preprocessed_columns_commitments[i], opening, &mut transcript);
             if !valid {
                 return Err("Preprocessed opening verification failed".to_string());
             }
+            col_evaluations.push(opening.claimed_evaluation());
         }
 
-        // the full eval is the concatenation of the witness columns evals and preprocessed columns evals
-        let columns_eval = col_evaluations
-            .iter()
-            .cloned()
-            .chain(
-                vk.circuit
-                    .preprocessed_values()
-                    .iter()
-                    .map(|col| col[0]),
-            )
-            .collect::<Vec<F>>();
 
         // check that the zero-check reduced evaluation match the computed one
         let mut recomputed_zero_check_evaluation = F::zero();
@@ -365,7 +356,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
             .map(|i| alpha.pow(&[i as u64]))
             .collect::<Vec<F>>();
         for (expr, alpha) in zip(vk.circuit.zero_check_expressions(), alpha_powers) {
-            let eval = expr.evaluate(&columns_eval);
+            let eval = expr.evaluate(&col_evaluations);
             recomputed_zero_check_evaluation += alpha * eval;
         }
 
@@ -454,11 +445,11 @@ mod tests {
         let mut circuit: TransitionCircuit<Fr> = TransitionCircuit::new(8);
         let state1 = circuit.allocate_state_cell();
         let state2 = circuit.allocate_state_cell();
-        // circuit.enforce_boundary_constraint(0, state1.current.to_expr());
-        // circuit.enforce_boundary_constraint(
-        //     0,
-        //     state2.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
-        // );
+        circuit.enforce_boundary_constraint(0, state1.current.to_expr());
+        circuit.enforce_boundary_constraint(
+            0,
+            state2.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
+        );
 
         circuit.enforce_constraint(
             state2.next.to_expr() - (state1.current.to_expr() + state2.current.to_expr()),
