@@ -21,7 +21,7 @@ Quill is a zkvm implemented from scratch in Rust. The only dependencies are arkw
   - [ ] Logup-GKR for avoiding the commitment of the quotient polynomials during multiset equality
   - [x] HyperPlonk proof system
   - [ ] Public inputs
-  - [ ] Multi-table proof system
+  - [x] Multi-table proof system
   - [ ] Cross-table lookups (using logup)
   - [ ] More sumcheck batching
 
