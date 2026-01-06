@@ -404,8 +404,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         if proof.opening_id.evaluation_point() != permutation_trace_evaluation_claim.point {
             return Err("ID opening point mismatch".to_string());
         }
-        let valid = pcs.verify(&vk.id_commitment, &proof.opening_id, transcript);
-        if !valid {
+        if !pcs.verify(&vk.id_commitment, &proof.opening_id, transcript) {
             return Err("ID opening verification failed".to_string());
         }
 
@@ -414,12 +413,11 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         {
             return Err("Permutation opening point mismatch".to_string());
         }
-        let valid = pcs.verify(
+        if !pcs.verify(
             &vk.permutation_commitment,
             &proof.opening_permutation,
             transcript,
-        );
-        if !valid {
+        ) {
             return Err("Permutation opening verification failed".to_string());
         }
 
@@ -429,12 +427,11 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         {
             return Err("Permutation trace opening point mismatch".to_string());
         }
-        let valid = pcs.verify(
+        if !pcs.verify(
             &witness_commitment,
             &proof.opening_permutation_trace,
             transcript,
-        );
-        if !valid {
+        ) {
             return Err("Permutation trace opening verification failed".to_string());
         }
 
