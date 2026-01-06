@@ -7,6 +7,13 @@ use ark_ff::PrimeField;
 use quill_pcs::{MultilinearPCS, MultilinearPCSProof};
 use quill_transcript::transcript::Transcript;
 
+pub enum LookupMode {
+    /// Prove that the source is a subset of the destination
+    Subset,
+    /// Prove that the source is equal to the destination
+    Equality,
+}
+
 pub struct MultisetEqualityProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub denom_left_commitment: PCS::Commitment,
     pub denom_right_commitment: PCS::Commitment,
@@ -23,6 +30,8 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         h_right: &VirtualPolynomialRef,
         transcript: &mut Transcript,
         pcs: &PCS,
+        mode: LookupMode,
+        multiplicities: Option<&VirtualPolynomialRef>,
     ) -> (Self, Vec<F>) {
         let num_vars = store.num_vars();
 
@@ -42,7 +51,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
             })
             .collect::<Vec<F>>();
 
-        let log_derivative_right_evals = (0..(1 << num_vars))
+        let mut log_derivative_right_evals = (0..(1 << num_vars))
             .map(|i| {
                 let g_evals = store
                     .polynomials
@@ -53,6 +62,36 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
                 (logup_eval_point + h_right_eval).inverse().unwrap()
             })
             .collect::<Vec<F>>();
+
+        match mode {
+            LookupMode::Subset => {
+                assert!(
+                    multiplicities.is_some(),
+                    "Multiplicities polynomial must be provided in subset mode"
+                );
+                // in subset mode, we need to multiply the right log derivative by the multiplicities
+                let multiplicities_evals = (0..(1 << num_vars))
+                    .map(|i| {
+                        let g_evals = store
+                            .polynomials
+                            .iter()
+                            .map(|poly| poly.evaluations[i])
+                            .collect::<Vec<F>>();
+                        store.evaluate_point(&g_evals, multiplicities.unwrap())
+                    })
+                    .collect::<Vec<F>>();
+
+                for i in 0..log_derivative_right_evals.len() {
+                    log_derivative_right_evals[i] *= multiplicities_evals[i];
+                }
+            }
+            LookupMode::Equality => {
+                assert!(
+                    multiplicities.is_none(),
+                    "Multiplicities polynomial must not be provided in equality mode"
+                );
+            }
+        }
 
         // commit to the polynomials
         let commitment_left = pcs.commit(&log_derivative_left_evals);
@@ -77,11 +116,18 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         //
         // \sum_{x in B_n} :
         // [denom_left(x) * (eval_point + h_left(x)) - 1 +
-        // lambda * (denom_right(x) * (eval_point + h_right(x)) - 1)] * eq(x, z) * alpha
+        // lambda * (denom_right(x) * (eval_point + h_right(x)) - m(x))] * eq(x, z) * alpha
         // + denom_left(x) - denom_right(x) = 0
+        //
+        // if mode == Subset, m(x) is the multiplicities polynomial
+        // if mode == Equality, m(x) = 1
         // TODO: (1) need a better interface to do this
         // TODO: (2) we should be able to do it using the standard zero-check interface, but right now
         // we cannot
+        let m = match mode {
+            LookupMode::Subset => store.virtual_polys[multiplicities.unwrap().index].clone(),
+            LookupMode::Equality => VirtualPolyExpr::Const(F::one()),
+        };
         let zerocheck_expr = denom_left_index.to_expr::<F>()
             * (VirtualPolyExpr::Const(logup_eval_point)
                 + store.virtual_polys[h_left.index].clone())
@@ -90,7 +136,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
                 * (denom_right_index.to_expr::<F>()
                     * (VirtualPolyExpr::Const(logup_eval_point)
                         + store.virtual_polys[h_right.index].clone())
-                    - VirtualPolyExpr::Const(F::one()));
+                    - m);
 
         // random point for the zero check
         let zerocheck_random_point = (0..num_vars)
@@ -141,6 +187,8 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         pcs: &PCS,
         left_h_eval: EvaluationClaim<F>,
         right_h_eval: EvaluationClaim<F>,
+        mode: LookupMode,
+        multiplicities_eval: Option<EvaluationClaim<F>>,
     ) -> Result<(), String> {
         // recompute eval_point
         let logup_eval_point = transcript.draw_field_element::<F>();
@@ -201,6 +249,30 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
             return Err("Multiset equality h evaluation point does not match sumcheck".to_string());
         }
 
+        let mut m = F::one();
+        match mode {
+            LookupMode::Subset => {
+                if let Some(multiplicities_eval) = multiplicities_eval {
+                    if multiplicities_eval.point != sumcheck_evaluation_claim.point {
+                        return Err(
+                            "Multiset equality multiplicities evaluation point does not match sumcheck"
+                                .to_string(),
+                        );
+                    }
+                    m = multiplicities_eval.evaluation;
+                } else {
+                    panic!("Multiplicities evaluation must be provided in subset mode");
+                }
+            }
+            LookupMode::Equality => {
+                // m = 1
+                assert!(
+                    multiplicities_eval.is_none(),
+                    "Multiplicities evaluation must not be provided in equality mode"
+                );
+            }
+        }
+
         // check the equation at the evaluation point
         let denom_left_eval = self.opening_proof_denom_left.claimed_evaluation();
         let denom_right_eval = self.opening_proof_denom_right.claimed_evaluation();
@@ -208,7 +280,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         let right_h_eval_value = right_h_eval.evaluation;
 
         let zerocheck_eval = denom_left_eval * (logup_eval_point + left_h_eval_value) - F::one()
-            + lambda * (denom_right_eval * (logup_eval_point + right_h_eval_value) - F::one());
+            + lambda * (denom_right_eval * (logup_eval_point + right_h_eval_value) - m);
 
         let eq_eval = eq_eval(&zerocheck_random_point, &left_h_eval_point);
         let final_eval = zerocheck_eval * eq_eval * alpha + denom_left_eval - denom_right_eval;
@@ -230,7 +302,9 @@ mod tests {
     use ark_std::rand::prelude::SliceRandom;
     use ark_std::test_rng;
     use ark_std::One;
+    use ark_std::Zero;
     use quill_pcs::kzg::KZG;
+    use rand::Rng;
 
     #[test]
     fn test_multiset_equality_proof() {
@@ -270,6 +344,8 @@ mod tests {
             &h_right_virtual,
             &mut transcript,
             &pcs,
+            LookupMode::Equality,
+            None,
         );
 
         // -- Verifier --
@@ -292,6 +368,8 @@ mod tests {
             &pcs,
             left_evaluation_claim,
             right_evaluation_claim,
+            LookupMode::Equality,
+            None,
         );
 
         assert!(
@@ -342,6 +420,8 @@ mod tests {
             &h_right_virtual,
             &mut transcript,
             &pcs,
+            LookupMode::Equality,
+            None,
         );
 
         // -- Verifier --
@@ -364,11 +444,193 @@ mod tests {
             &pcs,
             left_evaluation_claim,
             right_evaluation_claim,
+            LookupMode::Equality,
+            None,
         );
 
         assert!(
             verify_result.is_err(),
             "Multiset equality proof verification should have failed"
+        );
+    }
+
+    #[test]
+    fn test_multiset_inclusion_proof() {
+        let mut rng = test_rng();
+        let num_vars = 5;
+
+        println!("KZG setup...");
+        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1 << num_vars, &mut rng);
+        println!("KZG setup done.");
+
+        // generate a random degree 2^num_vars polynomial
+        let poly_degree = 1 << num_vars;
+        let table = (0..poly_degree)
+            .map(|_| Fr::rand(&mut rng))
+            .collect::<Vec<Fr>>();
+        let subset = (0..poly_degree)
+            .map(|_i| table[rng.gen_range(0..poly_degree)])
+            .collect::<Vec<Fr>>();
+
+        // compute multiplicities
+        let mut multiplicities = vec![Fr::zero(); poly_degree];
+        for val in &subset {
+            for (i, table_val) in table.iter().enumerate() {
+                if val == table_val {
+                    multiplicities[i] += Fr::one();
+                }
+            }
+        }
+
+        println!("Creating virtual polynomial store...");
+
+        let mut store = VirtualPolynomialStore::new(num_vars);
+        let h_left_index = store.allocate_polynomial(&subset);
+        let h_right_index = store.allocate_polynomial(&table);
+        let multiplicities_index = store.allocate_polynomial(&multiplicities);
+
+        let h_left_virtual = store.new_virtual_from_input(&h_left_index);
+        let h_right_virtual = store.new_virtual_from_input(&h_right_index);
+        let multiplicities_virtual = store.new_virtual_from_input(&multiplicities_index);
+
+        let mut transcript = Transcript::new(b"multiset_equality_test");
+
+        println!("Proving multiset equality...");
+        let (proof, evaluation_point) = MultisetEqualityProof::prove(
+            &mut store,
+            &h_left_virtual,
+            &h_right_virtual,
+            &mut transcript,
+            &pcs,
+            LookupMode::Subset,
+            Some(&multiplicities_virtual),
+        );
+
+        // -- Verifier --
+        let mut verifier_transcript = Transcript::new(b"multiset_equality_test");
+        let left_evaluation_claim = EvaluationClaim {
+            point: evaluation_point.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, subset)
+                .evaluate(&evaluation_point),
+        };
+
+        let right_evaluation_claim = EvaluationClaim {
+            point: evaluation_point.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, table)
+                .evaluate(&evaluation_point),
+        };
+
+        let multiplicities_evals = EvaluationClaim {
+            point: evaluation_point.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, multiplicities)
+                .evaluate(&evaluation_point),
+        };
+
+        println!("Verifying multiset equality proof...");
+        let verify_result = proof.verify(
+            &mut verifier_transcript,
+            &pcs,
+            left_evaluation_claim,
+            right_evaluation_claim,
+            LookupMode::Subset,
+            Some(multiplicities_evals),
+        );
+
+        assert!(
+            verify_result.is_ok(),
+            "Multiset equality proof verification failed: {:?}",
+            verify_result.err()
+        );
+        println!("Multiset equality proof verified successfully.");
+    }
+
+    #[test]
+    fn test_multiset_inclusion_proof_invalid_multiplicities() {
+        let mut rng = test_rng();
+        let num_vars = 5;
+
+        println!("KZG setup...");
+        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1 << num_vars, &mut rng);
+        println!("KZG setup done.");
+
+        // generate a random degree 2^num_vars polynomial
+        let poly_degree = 1 << num_vars;
+        let table = (0..poly_degree)
+            .map(|_| Fr::rand(&mut rng))
+            .collect::<Vec<Fr>>();
+        let subset = (0..poly_degree)
+            .map(|_i| table[rng.gen_range(0..poly_degree)])
+            .collect::<Vec<Fr>>();
+
+        // compute multiplicities
+        let mut multiplicities = vec![Fr::zero(); poly_degree];
+        for val in &subset {
+            for (i, table_val) in table.iter().enumerate() {
+                if val == table_val {
+                    multiplicities[i] += Fr::one();
+                }
+            }
+        }
+
+        multiplicities[0] += Fr::one(); // make multiplicities incorrect
+
+        println!("Creating virtual polynomial store...");
+
+        let mut store = VirtualPolynomialStore::new(num_vars);
+        let h_left_index = store.allocate_polynomial(&subset);
+        let h_right_index = store.allocate_polynomial(&table);
+        let multiplicities_index = store.allocate_polynomial(&multiplicities);
+
+        let h_left_virtual = store.new_virtual_from_input(&h_left_index);
+        let h_right_virtual = store.new_virtual_from_input(&h_right_index);
+        let multiplicities_virtual = store.new_virtual_from_input(&multiplicities_index);
+
+        let mut transcript = Transcript::new(b"multiset_equality_test");
+
+        println!("Proving multiset equality...");
+        let (proof, evaluation_point) = MultisetEqualityProof::prove(
+            &mut store,
+            &h_left_virtual,
+            &h_right_virtual,
+            &mut transcript,
+            &pcs,
+            LookupMode::Subset,
+            Some(&multiplicities_virtual),
+        );
+
+        // -- Verifier --
+        let mut verifier_transcript = Transcript::new(b"multiset_equality_test");
+        let left_evaluation_claim = EvaluationClaim {
+            point: evaluation_point.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, subset)
+                .evaluate(&evaluation_point),
+        };
+
+        let right_evaluation_claim = EvaluationClaim {
+            point: evaluation_point.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, table)
+                .evaluate(&evaluation_point),
+        };
+
+        let multiplicities_evals = EvaluationClaim {
+            point: evaluation_point.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars, multiplicities)
+                .evaluate(&evaluation_point),
+        };
+
+        println!("Verifying multiset equality proof...");
+        let verify_result = proof.verify(
+            &mut verifier_transcript,
+            &pcs,
+            left_evaluation_claim,
+            right_evaluation_claim,
+            LookupMode::Subset,
+            Some(multiplicities_evals),
+        );
+
+        assert!(
+            verify_result.is_err(),
+            "Multiset equality proof verification should have failed but didn't"
         );
     }
 }

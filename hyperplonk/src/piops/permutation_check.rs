@@ -1,4 +1,4 @@
-use crate::piops::multiset_check::MultisetEqualityProof;
+use crate::piops::multiset_check::{LookupMode, MultisetEqualityProof};
 use crate::piops::EvaluationClaim;
 use crate::utils::virtual_polynomial::{VirtualPolynomialRef, VirtualPolynomialStore};
 use ark_ff::PrimeField;
@@ -39,8 +39,15 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> PermutationCheckProof<F, PCS> {
         store.mul_const_in_place(&h_right_hat, alpha);
         store.add_in_place(&h_right_hat, &perm_ref);
 
-        let (multiset_equality_proof, evaluation_point) =
-            MultisetEqualityProof::prove(store, &h_left_hat, &h_right_hat, transcript, pcs);
+        let (multiset_equality_proof, evaluation_point) = MultisetEqualityProof::prove(
+            store,
+            &h_left_hat,
+            &h_right_hat,
+            transcript,
+            pcs,
+            LookupMode::Equality,
+            None,
+        );
 
         (
             Self {
@@ -74,8 +81,14 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> PermutationCheckProof<F, PCS> {
             evaluation: perm_eval.evaluation + alpha * right_h_eval.evaluation,
         };
 
-        self.multiset_equality_proof
-            .verify(transcript, pcs, left_hat_eval, right_hat_eval)
+        self.multiset_equality_proof.verify(
+            transcript,
+            pcs,
+            left_hat_eval,
+            right_hat_eval,
+            LookupMode::Equality,
+            None,
+        )
     }
 }
 
