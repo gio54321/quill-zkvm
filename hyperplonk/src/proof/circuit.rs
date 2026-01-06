@@ -2,7 +2,7 @@ use crate::utils::virtual_polynomial::VirtualPolyExpr;
 use ark_ff::PrimeField;
 
 /// Trait representing a general circuit that can be used to describe a relation to be proven
-/// with HyperPlonk.
+/// with HyperPlonk on a single trace.
 pub trait Circuit<F: PrimeField> {
     /// Number of rows in the circuit's trace
     /// Must be a power of two

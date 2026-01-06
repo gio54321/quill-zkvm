@@ -14,11 +14,9 @@ pub struct HyperPlonk<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<
     pub permutation_poly: Vec<F>,
     pub circuit: C,
     pub preprocessed_values: Vec<Vec<F>>,
-    pub _marker: std::marker::PhantomData<(F, PCS)>,
 }
 
-pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
-    pub witness_commitment: PCS::Commitment,
+pub struct TraceProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub zero_check_proof: ZeroCheckProof<F>,
     pub permutation_check_proof: PermutationCheckProof<F, PCS>,
     pub openings_zero_check: Vec<PCS::Proof>,
@@ -28,14 +26,22 @@ pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub opening_permutation_trace: PCS::Proof,
 }
 
+pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
+    pub witness_commitment: Vec<PCS::Commitment>,
+    pub trace_proofs: Vec<TraceProof<F, PCS>>,
+}
+
 #[derive(Clone)]
-pub struct HyperPlonkVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
-    pub num_cols: usize,
-    pub num_rows: usize,
+pub struct TraceVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
     pub circuit: C,
     pub preprocessed_columns_commitments: Vec<PCS::Commitment>,
     pub id_commitment: PCS::Commitment,
     pub permutation_commitment: PCS::Commitment,
+}
+
+#[derive(Clone)]
+pub struct HyperPlonkVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
+    pub trace_vks: Vec<TraceVK<F, PCS, C>>,
 }
 
 impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F, C, PCS> {
@@ -69,6 +75,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
                 .extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
         }
 
+        // TODO: make those into a single polynomial
         let preprocessed_commitments = preprocessed_values
             .iter()
             .map(|col| pcs.commit(col))
@@ -91,21 +98,20 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         let id_commitment = pcs.commit(&id_evals);
         let permutation_commitment = pcs.commit(&permutation_evals);
 
-        let vk = HyperPlonkVK {
-            num_cols: circuit.num_cols(),
-            num_rows: circuit.num_rows(),
+        let trace_vk = TraceVK {
             circuit: circuit.clone(),
             preprocessed_columns_commitments: preprocessed_commitments,
             id_commitment,
             permutation_commitment,
         };
         Self {
-            vk,
-            circuit,
+            vk: HyperPlonkVK {
+                trace_vks: vec![trace_vk],
+            },
             id_poly: id_evals,
             permutation_poly: permutation_evals,
+            circuit,
             preprocessed_values,
-            _marker: std::marker::PhantomData,
         }
     }
 
@@ -225,8 +231,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         let opening_permutation_trace =
             pcs.open(&full_witness, &permutation_check_claim, &mut transcript);
 
-        HyperPlonkProof {
-            witness_commitment,
+        let trace_proof = TraceProof {
             zero_check_proof,
             permutation_check_proof,
             openings_zero_check,
@@ -234,42 +239,46 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             opening_id,
             opening_permutation,
             opening_permutation_trace,
+        };
+
+        HyperPlonkProof {
+            witness_commitment: vec![witness_commitment],
+            trace_proofs: vec![trace_proof],
         }
     }
 }
 
 impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
-    pub fn verify<C: Circuit<F>>(
+    fn verify_trace_proof<C: Circuit<F>>(
         &self,
-        vk: &HyperPlonkVK<F, PCS, C>,
+        witness_commitment: &PCS::Commitment,
+        vk: &TraceVK<F, PCS, C>,
         pcs: &PCS,
+        proof: &TraceProof<F, PCS>,
+        transcript: &mut Transcript
     ) -> Result<(), String> {
-        let mut transcript = Transcript::new(b"hyperplonk_proof");
-
-        transcript.append_serializable(&self.witness_commitment);
-
         let alpha = transcript.draw_field_element::<F>();
 
-        let zero_check_eval_claim = self.zero_check_proof.verify(&mut transcript)?;
-        let log2_cols = (vk.num_cols).trailing_zeros() as usize;
+        let zero_check_eval_claim = proof.zero_check_proof.verify(transcript)?;
+        let log2_cols = (vk.circuit.num_cols()).trailing_zeros() as usize;
 
         let id_evaluation_claim = EvaluationClaim {
-            point: self.opening_id.evaluation_point(),
-            evaluation: self.opening_id.claimed_evaluation(),
+            point: proof.opening_id.evaluation_point(),
+            evaluation: proof.opening_id.claimed_evaluation(),
         };
 
         let permutation_evaluation_claim = EvaluationClaim {
-            point: self.opening_permutation.evaluation_point(),
-            evaluation: self.opening_permutation.claimed_evaluation(),
+            point: proof.opening_permutation.evaluation_point(),
+            evaluation: proof.opening_permutation.claimed_evaluation(),
         };
 
         let permutation_trace_evaluation_claim = EvaluationClaim {
-            point: self.opening_permutation_trace.evaluation_point(),
-            evaluation: self.opening_permutation_trace.claimed_evaluation(),
+            point: proof.opening_permutation_trace.evaluation_point(),
+            evaluation: proof.opening_permutation_trace.claimed_evaluation(),
         };
 
-        self.permutation_check_proof.verify(
-            &mut transcript,
+        proof.permutation_check_proof.verify(
+            transcript,
             &pcs,
             permutation_trace_evaluation_claim.clone(),
             permutation_trace_evaluation_claim.clone(),
@@ -288,12 +297,12 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
 
         // verify zero check openings
         let mut col_evaluations = vec![];
-        for (i, opening) in self.openings_zero_check.iter().enumerate() {
+        for (i, opening) in proof.openings_zero_check.iter().enumerate() {
             if opening.evaluation_point() != points[i] {
                 return Err("Zero check opening point mismatch".to_string());
             }
 
-            let valid = pcs.verify(&self.witness_commitment, opening, &mut transcript);
+            let valid = pcs.verify(&witness_commitment, opening, transcript);
             if !valid {
                 return Err("Zero check opening verification failed".to_string());
             }
@@ -302,7 +311,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // check preprocessed openings
-        for (i, opening) in self.openings_preprocessed.iter().enumerate() {
+        for (i, opening) in proof.openings_preprocessed.iter().enumerate() {
             if opening.evaluation_point() != zero_check_eval_claim.point {
                 return Err("Preprocessed opening point mismatch".to_string());
             }
@@ -310,7 +319,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
             let valid = pcs.verify(
                 &vk.preprocessed_columns_commitments[i],
                 opening,
-                &mut transcript,
+                transcript,
             );
             if !valid {
                 return Err("Preprocessed opening verification failed".to_string());
@@ -333,25 +342,52 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // verify id opening
-        if self.opening_id.evaluation_point() != permutation_trace_evaluation_claim.point {
+        if proof.opening_id.evaluation_point() != permutation_trace_evaluation_claim.point {
             return Err("ID opening point mismatch".to_string());
         }
-        let valid = pcs.verify(&vk.id_commitment, &self.opening_id, &mut transcript);
+        let valid = pcs.verify(&vk.id_commitment, &proof.opening_id, transcript);
         if !valid {
             return Err("ID opening verification failed".to_string());
         }
 
         // verify permutation opening
-        if self.opening_permutation.evaluation_point() != permutation_trace_evaluation_claim.point {
+        if proof.opening_permutation.evaluation_point() != permutation_trace_evaluation_claim.point {
             return Err("Permutation opening point mismatch".to_string());
         }
         let valid = pcs.verify(
             &vk.permutation_commitment,
-            &self.opening_permutation,
-            &mut transcript,
+            &proof.opening_permutation,
+            transcript,
         );
         if !valid {
             return Err("Permutation opening verification failed".to_string());
+        }
+
+        Ok(())
+
+    }
+
+    pub fn verify<C: Circuit<F>>(
+        &self,
+        vk: &HyperPlonkVK<F, PCS, C>,
+        pcs: &PCS,
+    ) -> Result<(), String> {
+        let mut transcript = Transcript::new(b"hyperplonk_proof");
+
+        transcript.append_serializable(&self.witness_commitment[0]);
+
+        if vk.trace_vks.len() != self.trace_proofs.len() {
+            return Err("Number of trace VKS and proofs mismatch".to_string());
+        }
+
+        for (trace_vk, trace_proof) in zip(vk.trace_vks.iter(), self.trace_proofs.iter()) {
+            self.verify_trace_proof(
+                &self.witness_commitment[0],
+                trace_vk,
+                pcs,
+                trace_proof,
+                &mut transcript,
+            )?;
         }
 
         Ok(())
