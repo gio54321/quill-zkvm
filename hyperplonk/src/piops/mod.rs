@@ -1,5 +1,6 @@
 use ark_ff::PrimeField;
 
+pub mod lookup;
 pub mod multiset_check;
 pub mod permutation_check;
 pub mod sumcheck;
