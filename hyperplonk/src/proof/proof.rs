@@ -523,7 +523,10 @@ mod tests {
         let state1 = circuit.allocate_state_cell();
         let state2 = circuit.allocate_state_cell();
         let tmp = circuit.allocate_witness_cell();
-        circuit.enforce_boundary_constraint(0, state1.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)));
+        circuit.enforce_boundary_constraint(
+            0,
+            state1.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
+        );
         circuit.enforce_boundary_constraint(
             0,
             state2.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
@@ -535,9 +538,8 @@ mod tests {
         );
 
         // state2.next = state1.current + tmp
-        circuit.enforce_constraint(
-            state2.next.to_expr() - (state1.current.to_expr() + tmp.to_expr()),
-        );
+        circuit
+            .enforce_constraint(state2.next.to_expr() - (state1.current.to_expr() + tmp.to_expr()));
 
         // state1.next = state2.current
         circuit.enforce_constraint(state1.next.to_expr() - state2.current.to_expr());

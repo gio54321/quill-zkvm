@@ -142,10 +142,7 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
         }
 
         // add 1 to each mapping to avoid zero values
-        let id_mapping = id_mapping
-            .iter()
-            .map(|x| *x + F::one())
-            .collect::<Vec<F>>();
+        let id_mapping = id_mapping.iter().map(|x| *x + F::one()).collect::<Vec<F>>();
         let permutation_mapping = permutation_mapping
             .iter()
             .map(|x| *x + F::one())
@@ -180,15 +177,10 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
             let row_values = witness.iter().map(|col| col[*row]).collect::<Vec<F>>();
             let eval = constraint.evaluate(&row_values);
             if eval != F::zero() {
-                return Err(
-                    format!(
-                        "Boundary constraint {} not satisfied at row {}: {:?} != 0\n row values: {:?}",
-                        constraint,
-                        row,
-                        eval,
-                        row_values
-                    )
-                );
+                return Err(format!(
+                    "Boundary constraint {} not satisfied at row {}: {:?} != 0\n row values: {:?}",
+                    constraint, row, eval, row_values
+                ));
             }
         }
 
