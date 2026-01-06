@@ -140,6 +140,17 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
                 permutation_mapping[to] = F::from(from as u64);
             }
         }
+
+        // add 1 to each mapping to avoid zero values
+        let id_mapping = id_mapping
+            .iter()
+            .map(|x| *x + F::one())
+            .collect::<Vec<F>>();
+        let permutation_mapping = permutation_mapping
+            .iter()
+            .map(|x| *x + F::one())
+            .collect::<Vec<F>>();
+
         (id_mapping, permutation_mapping)
     }
 
