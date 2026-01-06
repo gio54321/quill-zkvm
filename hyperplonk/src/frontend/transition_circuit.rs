@@ -81,7 +81,7 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
     }
 
     fn num_cols(&self) -> usize {
-        self.num_columns
+        self.num_columns.next_power_of_two()
     }
 
     fn num_preprocessed_columns(&self) -> usize {
@@ -107,9 +107,11 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
         let mut constraints = self.recurring_constraints.clone();
 
         // for boundary constraints, we need to multiply each constraint by the corresponding selector polynomial
+
+        let padded_num_cols = self.num_cols();
         for (i, (_row, constraint)) in self.boundary_constraints.iter().enumerate() {
             constraints.push(VirtualPolyExpr::Mul(
-                Box::new(VirtualPolyExpr::Input(i + self.num_columns)), // selector poly
+                Box::new(VirtualPolyExpr::Input(i + padded_num_cols)), // selector poly
                 Box::new(constraint.clone()),
             ));
         }
@@ -159,6 +161,23 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
                     )
                 );
                 }
+            }
+        }
+
+        // check boundary constraints
+        for (row, constraint) in &self.boundary_constraints {
+            let row_values = witness.iter().map(|col| col[*row]).collect::<Vec<F>>();
+            let eval = constraint.evaluate(&row_values);
+            if eval != F::zero() {
+                return Err(
+                    format!(
+                        "Boundary constraint {} not satisfied at row {}: {:?} != 0\n row values: {:?}",
+                        constraint,
+                        row,
+                        eval,
+                        row_values
+                    )
+                );
             }
         }
 

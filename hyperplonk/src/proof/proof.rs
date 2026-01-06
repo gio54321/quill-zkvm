@@ -9,16 +9,11 @@ use quill_transcript::transcript::Transcript;
 use std::iter::zip;
 
 pub struct HyperPlonk<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> {
-    pub vk: HyperPlonkVK<F, PCS, C>,
-    pub id_poly: Vec<F>,
-    pub permutation_poly: Vec<F>,
-    pub circuit: C,
-    pub preprocessed_values: Vec<Vec<F>>,
-    pub _marker: std::marker::PhantomData<(F, PCS)>,
+    pub trace_vks: Vec<TraceVK<F, PCS, C>>,
+    pub trace_pks: Vec<TracePK<F>>,
 }
 
-pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
-    pub witness_commitment: PCS::Commitment,
+pub struct TraceProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub zero_check_proof: ZeroCheckProof<F>,
     pub permutation_check_proof: PermutationCheckProof<F, PCS>,
     pub openings_zero_check: Vec<PCS::Proof>,
@@ -28,18 +23,43 @@ pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub opening_permutation_trace: PCS::Proof,
 }
 
-#[derive(Clone)]
-pub struct HyperPlonkVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
-    pub num_cols: usize,
-    pub num_rows: usize,
+pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
+    pub witness_commitment: Vec<PCS::Commitment>,
+    pub trace_proofs: Vec<TraceProof<F, PCS>>,
+}
+
+pub struct TraceVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
     pub circuit: C,
     pub preprocessed_columns_commitments: Vec<PCS::Commitment>,
     pub id_commitment: PCS::Commitment,
     pub permutation_commitment: PCS::Commitment,
 }
 
+impl<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F> + Clone> Clone for TraceVK<F, PCS, C> {
+    fn clone(&self) -> Self {
+        TraceVK {
+            circuit: self.circuit.clone(),
+            preprocessed_columns_commitments: self.preprocessed_columns_commitments.clone(),
+            id_commitment: self.id_commitment.clone(),
+            permutation_commitment: self.permutation_commitment.clone(),
+        }
+    }
+}
+
+pub struct TracePK<F: PrimeField> {
+    pub id_poly: Vec<F>,
+    pub permutation_poly: Vec<F>,
+    pub preprocessed_values: Vec<Vec<F>>,
+}
+
+pub struct HyperPlonkVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
+    pub trace_vks: Vec<TraceVK<F, PCS, C>>,
+}
+
+pub struct TraceWitness<F: PrimeField>(pub Vec<Vec<F>>);
+
 impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F, C, PCS> {
-    pub fn preprocess(circuit: C, pcs: &PCS) -> Self {
+    fn preprocess_trace(circuit: &C, pcs: &PCS) -> (TracePK<F>, TraceVK<F, PCS, C>) {
         assert!(
             circuit.num_rows().is_power_of_two(),
             "Number of rows must be a power of two"
@@ -51,11 +71,6 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
 
         let trace_num_vars = circuit.num_rows().trailing_zeros() as usize
             + circuit.num_cols().trailing_zeros() as usize;
-
-        assert!(
-            pcs.max_degree() == 1 << trace_num_vars,
-            "PCS max degree mismatch"
-        );
 
         // pad the preprocessed columns to the full trace size with zeros and commit to them
         let mut preprocessed_values = circuit.preprocessed_values();
@@ -69,6 +84,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
                 .extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
         }
 
+        // TODO: make those into a single polynomial
         let preprocessed_commitments = preprocessed_values
             .iter()
             .map(|col| pcs.commit(col))
@@ -91,75 +107,63 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         let id_commitment = pcs.commit(&id_evals);
         let permutation_commitment = pcs.commit(&permutation_evals);
 
-        let vk = HyperPlonkVK {
-            num_cols: circuit.num_cols(),
-            num_rows: circuit.num_rows(),
+        let vk = TraceVK {
             circuit: circuit.clone(),
             preprocessed_columns_commitments: preprocessed_commitments,
             id_commitment,
             permutation_commitment,
         };
-        Self {
-            vk,
-            circuit,
+        let pk = TracePK {
             id_poly: id_evals,
             permutation_poly: permutation_evals,
             preprocessed_values,
-            _marker: std::marker::PhantomData,
+        };
+        (pk, vk)
+    }
+
+    pub fn preprocess(circuits: Vec<C>, pcs: &PCS) -> Self {
+        let mut trace_pks = vec![];
+        let mut trace_vks = vec![];
+        for circuit in &circuits {
+            let (trace_pk, trace_vk) = Self::preprocess_trace(&circuit, pcs);
+            trace_pks.push(trace_pk);
+            trace_vks.push(trace_vk);
+        }
+
+        Self {
+            trace_pks,
+            trace_vks,
         }
     }
 
-    pub fn prove(&self, pcs: &PCS, witness: &Vec<Vec<F>>) -> HyperPlonkProof<F, PCS> {
-        // assert that the witness has the correct shape
-        assert_eq!(
-            witness.len(),
-            self.circuit.num_cols(),
-            "Witness columns length mismatch"
-        );
-        for col in witness {
-            assert_eq!(
-                col.len(),
-                self.circuit.num_rows(),
-                "Witness column row length mismatch"
-            );
+    pub fn to_vk(&self) -> HyperPlonkVK<F, PCS, C> {
+        HyperPlonkVK {
+            trace_vks: self.trace_vks.clone(),
         }
+    }
 
-        // first of all, do a sanity check that the witness satisfies the circuit constraints
-        self.circuit.check_constraints(witness).unwrap();
+    fn prove_trace(
+        &self,
+        pcs: &PCS,
+        witness: &Vec<Vec<F>>,
+        full_witness: &Vec<F>,
+        transcript: &mut Transcript,
+        pk: &TracePK<F>,
+        circuit: &C,
+    ) -> TraceProof<F, PCS> {
+        let log2_rows = circuit.num_rows().trailing_zeros() as usize;
+        let log2_cols = circuit.num_cols().trailing_zeros() as usize;
 
-        let num_rows = self.circuit.num_rows();
-
-        let full_witness = witness.iter().flatten().cloned().collect::<Vec<F>>();
-
-        assert_eq!(
-            full_witness.len(),
-            self.circuit.num_cols() * self.circuit.num_rows(),
-            "Padded witness length mismatch"
-        );
-
-        let log2_rows = num_rows.trailing_zeros() as usize;
-        let log2_cols = self.circuit.num_cols().trailing_zeros() as usize;
-
-        // initialize a new transcript
-        let mut transcript = Transcript::new(b"hyperplonk_proof");
-
-        // the prover commits to the full witness polynomial
-        let witness_commitment = pcs.commit(&full_witness);
-        transcript.append_serializable(&witness_commitment);
-
-        // HACK: it is implicitly assumed that the allocated polys have
-        // indices 0..num_cols() for witness columns
-        // refactor this
         let mut poly_store: VirtualPolynomialStore<F> = VirtualPolynomialStore::new(log2_rows);
         for column in witness {
             poly_store.allocate_polynomial(column);
         }
-        for preprocessed in self.circuit.preprocessed_values() {
+        for preprocessed in circuit.preprocessed_values() {
             poly_store.allocate_polynomial(&preprocessed);
         }
 
         // batch together all constraints into a single expression using a random alpha
-        let zero_check_exprs = self.circuit.zero_check_expressions();
+        let zero_check_exprs = circuit.zero_check_expressions();
         let alpha = transcript.draw_field_element::<F>();
 
         let alpha_powers = (0..zero_check_exprs.len())
@@ -173,7 +177,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         // prove the zero-check relation
         let zero_check_virtual = poly_store.new_virtual_from_expr(zero_check_expr);
         let (zero_check_proof, zero_check_eval_claim) =
-            ZeroCheckProof::prove(&mut poly_store, &zero_check_virtual, &mut transcript);
+            ZeroCheckProof::prove(&mut poly_store, &zero_check_virtual, transcript);
 
         // construct a new polynomial store for the permutation check
         // this check is done on the whole trace at once, without separating the columns
@@ -185,48 +189,47 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             &mut poly_store2,
             &witness_virtual,
             &witness_virtual,
-            &self.id_poly,
-            &self.permutation_poly,
-            &mut transcript,
+            &pk.id_poly,
+            &pk.permutation_poly,
+            transcript,
             pcs,
         );
 
         // compute openings for the witness polynomial at the zero-check evaluation point
+        // TODO: we only need to open the columns that appear in the constraints, here
+        // we open also padding columns that are not used. The circuit should expose both padded
+        // and unpadded num cols. For now it's ok, to keep things simple.
         let mut openings_zero_check = vec![];
-        for col in 0..self.circuit.num_cols() {
+        for col in 0..circuit.num_cols() {
             let mut point = zero_check_eval_claim.point.clone();
-            for i in (0..log2_cols).rev() {
+            for i in 0..log2_cols {
                 point.push(F::from(((col >> i) & 1) as u64));
             }
-            let opening = pcs.open(&full_witness, &point, &mut transcript);
+            let opening = pcs.open(&full_witness, &point, transcript);
             openings_zero_check.push(opening);
         }
 
         // compute openings for the preprocessed columns at the zero-check evaluation point
         // this is not strictly necessary, but it saves some work to the verifier
-        let preprocessed_columns = self.circuit.preprocessed_values();
+        let preprocessed_columns = circuit.preprocessed_values();
         let mut openings_preprocessed = vec![];
-        for i in 0..self.circuit.num_preprocessed_columns() {
+        for i in 0..circuit.num_preprocessed_columns() {
             let opening = pcs.open(
                 &preprocessed_columns[i],
                 &zero_check_eval_claim.point,
-                &mut transcript,
+                transcript,
             );
             openings_preprocessed.push(opening);
         }
 
         // compute openings for the id and permutation polynomials at the permutation check evaluation point
-        let opening_id = pcs.open(&self.id_poly, &permutation_check_claim, &mut transcript);
-        let opening_permutation = pcs.open(
-            &self.permutation_poly,
-            &permutation_check_claim,
-            &mut transcript,
-        );
+        let opening_id = pcs.open(&pk.id_poly, &permutation_check_claim, transcript);
+        let opening_permutation =
+            pcs.open(&pk.permutation_poly, &permutation_check_claim, transcript);
         let opening_permutation_trace =
-            pcs.open(&full_witness, &permutation_check_claim, &mut transcript);
+            pcs.open(&full_witness, &permutation_check_claim, transcript);
 
-        HyperPlonkProof {
-            witness_commitment,
+        TraceProof {
             zero_check_proof,
             permutation_check_proof,
             openings_zero_check,
@@ -236,40 +239,103 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             opening_permutation_trace,
         }
     }
+
+    pub fn prove(
+        &self,
+        pcs: &PCS,
+        witness_traces: &Vec<TraceWitness<F>>,
+    ) -> HyperPlonkProof<F, PCS> {
+        // initialize a new transcript
+        let mut transcript = Transcript::new(b"hyperplonk_proof");
+
+        // perform sanity checks and commut to the traces
+        let mut trace_commitments = vec![];
+        let mut full_traces = vec![];
+        for (trace_witness, vk) in zip(witness_traces.iter(), self.trace_vks.iter()) {
+            let witness = &trace_witness.0;
+            let circuit = &vk.circuit;
+            assert_eq!(
+                witness.len(),
+                circuit.num_cols(),
+                "Witness columns length mismatch"
+            );
+            for col in witness {
+                assert_eq!(
+                    col.len(),
+                    circuit.num_rows(),
+                    "Witness column row length mismatch"
+                );
+            }
+
+            // first of all, do a sanity check that the witness satisfies the circuit constraints
+            circuit.check_constraints(witness).unwrap();
+
+            // concatenate the witness columns into a single full witness
+            let full_witness = witness.iter().flatten().cloned().collect::<Vec<F>>();
+
+            assert_eq!(
+                full_witness.len(),
+                circuit.num_cols() * circuit.num_rows(),
+                "Padded witness length mismatch"
+            );
+
+            // the prover commits to the full witness polynomial
+            let witness_commitment = pcs.commit(&full_witness);
+            transcript.append_serializable(&witness_commitment);
+
+            trace_commitments.push(witness_commitment);
+            full_traces.push(full_witness);
+        }
+
+        let mut trace_proofs = vec![];
+        for i in 0..witness_traces.len() {
+            let witness = &witness_traces[i].0;
+            let full_witness = &full_traces[i];
+            let circuit = &self.trace_vks[i].circuit;
+            let pk = &self.trace_pks[i];
+            let trace_proof =
+                self.prove_trace(pcs, witness, full_witness, &mut transcript, &pk, &circuit);
+            trace_proofs.push(trace_proof);
+        }
+
+        HyperPlonkProof {
+            witness_commitment: trace_commitments,
+            trace_proofs: trace_proofs,
+        }
+    }
 }
 
 impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
-    pub fn verify<C: Circuit<F>>(
+    fn verify_trace_proof<C: Circuit<F>>(
         &self,
-        vk: &HyperPlonkVK<F, PCS, C>,
+        witness_commitment: &PCS::Commitment,
+        vk: &TraceVK<F, PCS, C>,
         pcs: &PCS,
+        proof: &TraceProof<F, PCS>,
+        transcript: &mut Transcript,
     ) -> Result<(), String> {
-        let mut transcript = Transcript::new(b"hyperplonk_proof");
-
-        transcript.append_serializable(&self.witness_commitment);
-
         let alpha = transcript.draw_field_element::<F>();
 
-        let zero_check_eval_claim = self.zero_check_proof.verify(&mut transcript)?;
-        let log2_cols = (vk.num_cols).trailing_zeros() as usize;
+        let zero_check_eval_claim = proof.zero_check_proof.verify(transcript)?;
+        let log2_cols = (vk.circuit.num_cols()).trailing_zeros() as usize;
 
         let id_evaluation_claim = EvaluationClaim {
-            point: self.opening_id.evaluation_point(),
-            evaluation: self.opening_id.claimed_evaluation(),
+            point: proof.opening_id.evaluation_point(),
+            evaluation: proof.opening_id.claimed_evaluation(),
         };
 
         let permutation_evaluation_claim = EvaluationClaim {
-            point: self.opening_permutation.evaluation_point(),
-            evaluation: self.opening_permutation.claimed_evaluation(),
+            point: proof.opening_permutation.evaluation_point(),
+            evaluation: proof.opening_permutation.claimed_evaluation(),
         };
 
         let permutation_trace_evaluation_claim = EvaluationClaim {
-            point: self.opening_permutation_trace.evaluation_point(),
-            evaluation: self.opening_permutation_trace.claimed_evaluation(),
+            point: proof.opening_permutation_trace.evaluation_point(),
+            evaluation: proof.opening_permutation_trace.claimed_evaluation(),
         };
 
-        self.permutation_check_proof.verify(
-            &mut transcript,
+        proof.permutation_check_proof.verify(
+            transcript,
             &pcs,
             permutation_trace_evaluation_claim.clone(),
             permutation_trace_evaluation_claim.clone(),
@@ -280,7 +346,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         let mut points = vec![];
         for col in 0..vk.circuit.num_cols() {
             let mut point = zero_check_eval_claim.point.clone();
-            for i in (0..log2_cols).rev() {
+            for i in 0..log2_cols {
                 point.push(F::from(((col >> i) & 1) as u64));
             }
             points.push(point);
@@ -288,12 +354,12 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
 
         // verify zero check openings
         let mut col_evaluations = vec![];
-        for (i, opening) in self.openings_zero_check.iter().enumerate() {
+        for (i, opening) in proof.openings_zero_check.iter().enumerate() {
             if opening.evaluation_point() != points[i] {
                 return Err("Zero check opening point mismatch".to_string());
             }
 
-            let valid = pcs.verify(&self.witness_commitment, opening, &mut transcript);
+            let valid = pcs.verify(&witness_commitment, opening, transcript);
             if !valid {
                 return Err("Zero check opening verification failed".to_string());
             }
@@ -302,16 +368,12 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // check preprocessed openings
-        for (i, opening) in self.openings_preprocessed.iter().enumerate() {
+        for (i, opening) in proof.openings_preprocessed.iter().enumerate() {
             if opening.evaluation_point() != zero_check_eval_claim.point {
                 return Err("Preprocessed opening point mismatch".to_string());
             }
 
-            let valid = pcs.verify(
-                &vk.preprocessed_columns_commitments[i],
-                opening,
-                &mut transcript,
-            );
+            let valid = pcs.verify(&vk.preprocessed_columns_commitments[i], opening, transcript);
             if !valid {
                 return Err("Preprocessed opening verification failed".to_string());
             }
@@ -333,25 +395,69 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // verify id opening
-        if self.opening_id.evaluation_point() != permutation_trace_evaluation_claim.point {
+        if proof.opening_id.evaluation_point() != permutation_trace_evaluation_claim.point {
             return Err("ID opening point mismatch".to_string());
         }
-        let valid = pcs.verify(&vk.id_commitment, &self.opening_id, &mut transcript);
-        if !valid {
+        if !pcs.verify(&vk.id_commitment, &proof.opening_id, transcript) {
             return Err("ID opening verification failed".to_string());
         }
 
         // verify permutation opening
-        if self.opening_permutation.evaluation_point() != permutation_trace_evaluation_claim.point {
+        if proof.opening_permutation.evaluation_point() != permutation_trace_evaluation_claim.point
+        {
             return Err("Permutation opening point mismatch".to_string());
         }
-        let valid = pcs.verify(
+        if !pcs.verify(
             &vk.permutation_commitment,
-            &self.opening_permutation,
-            &mut transcript,
-        );
-        if !valid {
+            &proof.opening_permutation,
+            transcript,
+        ) {
             return Err("Permutation opening verification failed".to_string());
+        }
+
+        // verify permutation trace opening
+        if proof.opening_permutation_trace.evaluation_point()
+            != permutation_trace_evaluation_claim.point
+        {
+            return Err("Permutation trace opening point mismatch".to_string());
+        }
+        if !pcs.verify(
+            &witness_commitment,
+            &proof.opening_permutation_trace,
+            transcript,
+        ) {
+            return Err("Permutation trace opening verification failed".to_string());
+        }
+
+        Ok(())
+    }
+
+    pub fn verify<C: Circuit<F>>(
+        &self,
+        vk: &HyperPlonkVK<F, PCS, C>,
+        pcs: &PCS,
+    ) -> Result<(), String> {
+        let mut transcript = Transcript::new(b"hyperplonk_proof");
+
+        for commitment in &self.witness_commitment {
+            transcript.append_serializable(commitment);
+        }
+
+        if vk.trace_vks.len() != self.trace_proofs.len() {
+            return Err("Number of trace VKS and proofs mismatch".to_string());
+        }
+
+        for i in 0..vk.trace_vks.len() {
+            let witness_commitment = &self.witness_commitment[i];
+            let trace_vk = &vk.trace_vks[i];
+            let trace_proof = &self.trace_proofs[i];
+            self.verify_trace_proof(
+                witness_commitment,
+                trace_vk,
+                pcs,
+                trace_proof,
+                &mut transcript,
+            )?;
         }
 
         Ok(())
@@ -370,6 +476,101 @@ mod tests {
     use ark_std::Zero;
     use quill_pcs::kzg::KZG;
     use rand::SeedableRng;
+
+    fn get_fibonacci_circuit_and_trace() -> (TransitionCircuit<Fr>, TraceWitness<Fr>) {
+        // simple fibonacci circuit
+        let mut circuit: TransitionCircuit<Fr> = TransitionCircuit::new(8);
+        let state1 = circuit.allocate_state_cell();
+        let state2 = circuit.allocate_state_cell();
+        circuit.enforce_boundary_constraint(0, state1.current.to_expr());
+        circuit.enforce_boundary_constraint(
+            0,
+            state2.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
+        );
+
+        circuit.enforce_constraint(
+            state2.next.to_expr() - (state1.current.to_expr() + state2.current.to_expr()),
+        );
+        circuit.enforce_constraint(state1.next.to_expr() - state2.current.to_expr());
+
+        // construct a valid witness for fibonacci
+        let mut witness: Vec<Vec<Fr>> =
+            vec![vec![Fr::zero(); circuit.num_rows()]; circuit.num_cols()];
+        for row in 0..circuit.num_rows() {
+            if row == 0 {
+                witness[state1.current.col][row] = Fr::from(0u64);
+                witness[state2.current.col][row] = Fr::from(1u64);
+                witness[state1.next.col][row] = Fr::from(1u64);
+                witness[state2.next.col][row] = Fr::from(1u64);
+            } else {
+                witness[state1.current.col][row] = witness[state1.next.col][row - 1];
+                witness[state2.current.col][row] = witness[state2.next.col][row - 1];
+                witness[state1.next.col][row] = witness[state2.current.col][row];
+                witness[state2.next.col][row] =
+                    witness[state2.current.col][row] + witness[state1.current.col][row];
+            }
+        }
+
+        let trace_witness = TraceWitness(witness.clone());
+        (circuit, trace_witness)
+    }
+
+    fn get_modified_fibonacci_circuit_and_trace() -> (TransitionCircuit<Fr>, TraceWitness<Fr>) {
+        // yet another fibonacci-style circuit, but some more constraints
+        // compute f(0) = 1, f(1) = 1, f(n) = f(n-1) + f(n-1) * f(n-2)
+
+        let mut circuit: TransitionCircuit<Fr> = TransitionCircuit::new(8);
+        let state1 = circuit.allocate_state_cell();
+        let state2 = circuit.allocate_state_cell();
+        let tmp = circuit.allocate_witness_cell();
+        circuit.enforce_boundary_constraint(0, state1.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)));
+        circuit.enforce_boundary_constraint(
+            0,
+            state2.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
+        );
+
+        // tmp = state1.current * state2.current
+        circuit.enforce_constraint(
+            tmp.to_expr() - state1.current.to_expr() * state2.current.to_expr(),
+        );
+
+        // state2.next = state1.current + tmp
+        circuit.enforce_constraint(
+            state2.next.to_expr() - (state1.current.to_expr() + tmp.to_expr()),
+        );
+
+        // state1.next = state2.current
+        circuit.enforce_constraint(state1.next.to_expr() - state2.current.to_expr());
+
+        let mut witness: Vec<Vec<Fr>> =
+            vec![vec![Fr::zero(); circuit.num_rows()]; circuit.num_cols()];
+        for row in 0..circuit.num_rows() {
+            if row == 0 {
+                witness[state1.current.col][row] = Fr::from(1u64);
+                witness[state2.current.col][row] = Fr::from(1u64);
+            } else {
+                witness[state1.current.col][row] = witness[state1.next.col][row - 1];
+                witness[state2.current.col][row] = witness[state2.next.col][row - 1];
+            }
+            witness[state1.next.col][row] = witness[state2.current.col][row];
+            witness[tmp.col][row] =
+                witness[state1.current.col][row] * witness[state2.current.col][row];
+            witness[state2.next.col][row] =
+                witness[state1.current.col][row] + witness[tmp.col][row];
+        }
+
+        // print the trace
+        for row in 0..circuit.num_rows() {
+            let mut row_vals = vec![];
+            for col in 0..circuit.num_cols() {
+                row_vals.push(witness[col][row]);
+            }
+            println!("Row {}: {:?}", row, row_vals);
+        }
+
+        let trace_witness = TraceWitness(witness.clone());
+        (circuit, trace_witness)
+    }
 
     #[test]
     fn test_pcs_interface() {
@@ -406,20 +607,9 @@ mod tests {
         let seed = [0u8; 32];
         let mut rng = rand::rngs::StdRng::from_seed(seed);
 
-        // simple fibonacci circuit
-        let mut circuit: TransitionCircuit<Fr> = TransitionCircuit::new(8);
-        let state1 = circuit.allocate_state_cell();
-        let state2 = circuit.allocate_state_cell();
-        circuit.enforce_boundary_constraint(0, state1.current.to_expr());
-        circuit.enforce_boundary_constraint(
-            0,
-            state2.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
-        );
+        let (circuit, trace_witness) = get_fibonacci_circuit_and_trace();
 
-        circuit.enforce_constraint(
-            state2.next.to_expr() - (state1.current.to_expr() + state2.current.to_expr()),
-        );
-        circuit.enforce_constraint(state1.next.to_expr() - state2.current.to_expr());
+        let witness_traces = vec![trace_witness];
 
         let max_degree = circuit.num_cols().next_power_of_two() * circuit.num_rows();
         assert!(
@@ -430,30 +620,46 @@ mod tests {
         let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(max_degree, &mut rng);
         println!("KZG setup done.");
 
-        let hyperplonk = HyperPlonk::preprocess(circuit.clone(), &pcs);
+        let hyperplonk = HyperPlonk::preprocess(vec![circuit.clone()], &pcs);
         println!("HyperPlonk preprocessing done.");
 
-        // construct a valid witness for fibonacci
-        let mut witness: Vec<Vec<Fr>> =
-            vec![vec![Fr::zero(); circuit.num_rows()]; circuit.num_cols()];
-        for row in 0..circuit.num_rows() {
-            if row == 0 {
-                witness[state1.current.col][row] = Fr::from(0u64);
-                witness[state2.current.col][row] = Fr::from(1u64);
-                witness[state1.next.col][row] = Fr::from(1u64);
-                witness[state2.next.col][row] = Fr::from(1u64);
-            } else {
-                witness[state1.current.col][row] = witness[state1.next.col][row - 1];
-                witness[state2.current.col][row] = witness[state2.next.col][row - 1];
-                witness[state1.next.col][row] = witness[state2.current.col][row];
-                witness[state2.next.col][row] =
-                    witness[state2.current.col][row] + witness[state1.current.col][row];
-            }
-        }
+        let proof = hyperplonk.prove(&pcs, &witness_traces);
 
-        let proof = hyperplonk.prove(&pcs, &witness);
+        let vk = hyperplonk.to_vk();
+        proof.verify(&vk, &pcs).unwrap();
+        println!("HyperPlonk proof verified.");
+    }
 
-        proof.verify(&hyperplonk.vk, &pcs).unwrap();
+    #[test]
+    fn test_hyperplonk_proof_multitrace() {
+        let seed = [0u8; 32];
+        let mut rng = rand::rngs::StdRng::from_seed(seed);
+
+        let (circuit1, trace_witness1) = get_fibonacci_circuit_and_trace();
+        let (circuit2, trace_witness2) = get_modified_fibonacci_circuit_and_trace();
+
+        let witness_traces = vec![trace_witness1, trace_witness2];
+
+        let max_degree1 = circuit1.num_cols().next_power_of_two() * circuit1.num_rows();
+        let max_degree2 = circuit2.num_cols().next_power_of_two() * circuit2.num_rows();
+        let max_degree = std::cmp::max(max_degree1, max_degree2);
+        assert!(
+            max_degree.is_power_of_two(),
+            "Max degree must be a power of two"
+        );
+        println!("KZG setup...");
+        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(max_degree, &mut rng);
+        println!("KZG setup done.");
+
+        let circuits = vec![circuit1.clone(), circuit2.clone()];
+
+        let hyperplonk = HyperPlonk::preprocess(circuits, &pcs);
+        println!("HyperPlonk preprocessing done.");
+
+        let proof = hyperplonk.prove(&pcs, &witness_traces);
+
+        let vk = hyperplonk.to_vk();
+        proof.verify(&vk, &pcs).unwrap();
         println!("HyperPlonk proof verified.");
     }
 }
