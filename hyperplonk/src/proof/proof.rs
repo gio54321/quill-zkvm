@@ -72,11 +72,6 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         let trace_num_vars = circuit.num_rows().trailing_zeros() as usize
             + circuit.num_cols().trailing_zeros() as usize;
 
-        assert!(
-            pcs.max_degree() == 1 << trace_num_vars,
-            "PCS max degree mismatch"
-        );
-
         // pad the preprocessed columns to the full trace size with zeros and commit to them
         let mut preprocessed_values = circuit.preprocessed_values();
         for i in 0..preprocessed_values.len() {
@@ -158,9 +153,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
     ) -> TraceProof<F, PCS> {
         let log2_rows = circuit.num_rows().trailing_zeros() as usize;
         let log2_cols = circuit.num_cols().trailing_zeros() as usize;
-        // HACK: it is implicitly assumed that the allocated polys have
-        // indices 0..num_cols() for witness columns
-        // refactor this
+
         let mut poly_store: VirtualPolynomialStore<F> = VirtualPolynomialStore::new(log2_rows);
         for column in witness {
             poly_store.allocate_polynomial(column);
@@ -172,7 +165,6 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         // batch together all constraints into a single expression using a random alpha
         let zero_check_exprs = circuit.zero_check_expressions();
         let alpha = transcript.draw_field_element::<F>();
-        println!("[Prover] Zero-check alpha: {:?}", alpha);
 
         let alpha_powers = (0..zero_check_exprs.len())
             .map(|i| alpha.pow(&[i as u64]))
@@ -204,10 +196,13 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         );
 
         // compute openings for the witness polynomial at the zero-check evaluation point
+        // TODO: we only need to open the columns that appear in the constraints, here
+        // we open also padding columns that are not used. The circuit should expose both padded
+        // and unpadded num cols. For now it's ok, to keep things simple.
         let mut openings_zero_check = vec![];
         for col in 0..circuit.num_cols() {
             let mut point = zero_check_eval_claim.point.clone();
-            for i in (0..log2_cols).rev() {
+            for i in 0..log2_cols {
                 point.push(F::from(((col >> i) & 1) as u64));
             }
             let opening = pcs.open(&full_witness, &point, transcript);
@@ -320,7 +315,6 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         transcript: &mut Transcript,
     ) -> Result<(), String> {
         let alpha = transcript.draw_field_element::<F>();
-        println!("[Verifier] Zero-check alpha: {:?}", alpha);
 
         let zero_check_eval_claim = proof.zero_check_proof.verify(transcript)?;
         let log2_cols = (vk.circuit.num_cols()).trailing_zeros() as usize;
@@ -352,7 +346,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         let mut points = vec![];
         for col in 0..vk.circuit.num_cols() {
             let mut point = zero_check_eval_claim.point.clone();
-            for i in (0..log2_cols).rev() {
+            for i in 0..log2_cols {
                 point.push(F::from(((col >> i) & 1) as u64));
             }
             points.push(point);
@@ -521,6 +515,63 @@ mod tests {
         (circuit, trace_witness)
     }
 
+    fn get_modified_fibonacci_circuit_and_trace() -> (TransitionCircuit<Fr>, TraceWitness<Fr>) {
+        // yet another fibonacci-style circuit, but some more constraints
+        // compute f(0) = 1, f(1) = 1, f(n) = f(n-1) + f(n-1) * f(n-2)
+
+        let mut circuit: TransitionCircuit<Fr> = TransitionCircuit::new(8);
+        let state1 = circuit.allocate_state_cell();
+        let state2 = circuit.allocate_state_cell();
+        let tmp = circuit.allocate_witness_cell();
+        circuit.enforce_boundary_constraint(0, state1.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)));
+        circuit.enforce_boundary_constraint(
+            0,
+            state2.current.to_expr() - VirtualPolyExpr::Const(Fr::from(1u64)),
+        );
+
+        // tmp = state1.current * state2.current
+        circuit.enforce_constraint(
+            tmp.to_expr() - state1.current.to_expr() * state2.current.to_expr(),
+        );
+
+        // state2.next = state1.current + tmp
+        circuit.enforce_constraint(
+            state2.next.to_expr() - (state1.current.to_expr() + tmp.to_expr()),
+        );
+
+        // state1.next = state2.current
+        circuit.enforce_constraint(state1.next.to_expr() - state2.current.to_expr());
+
+        let mut witness: Vec<Vec<Fr>> =
+            vec![vec![Fr::zero(); circuit.num_rows()]; circuit.num_cols()];
+        for row in 0..circuit.num_rows() {
+            if row == 0 {
+                witness[state1.current.col][row] = Fr::from(1u64);
+                witness[state2.current.col][row] = Fr::from(1u64);
+            } else {
+                witness[state1.current.col][row] = witness[state1.next.col][row - 1];
+                witness[state2.current.col][row] = witness[state2.next.col][row - 1];
+            }
+            witness[state1.next.col][row] = witness[state2.current.col][row];
+            witness[tmp.col][row] =
+                witness[state1.current.col][row] * witness[state2.current.col][row];
+            witness[state2.next.col][row] =
+                witness[state1.current.col][row] + witness[tmp.col][row];
+        }
+
+        // print the trace
+        for row in 0..circuit.num_rows() {
+            let mut row_vals = vec![];
+            for col in 0..circuit.num_cols() {
+                row_vals.push(witness[col][row]);
+            }
+            println!("Row {}: {:?}", row, row_vals);
+        }
+
+        let trace_witness = TraceWitness(witness.clone());
+        (circuit, trace_witness)
+    }
+
     #[test]
     fn test_pcs_interface() {
         let mut rng = test_rng();
@@ -585,11 +636,13 @@ mod tests {
         let mut rng = rand::rngs::StdRng::from_seed(seed);
 
         let (circuit1, trace_witness1) = get_fibonacci_circuit_and_trace();
-        let (circuit2, trace_witness2) = get_fibonacci_circuit_and_trace();
+        let (circuit2, trace_witness2) = get_modified_fibonacci_circuit_and_trace();
 
         let witness_traces = vec![trace_witness1, trace_witness2];
 
-        let max_degree = circuit1.num_cols().next_power_of_two() * circuit1.num_rows();
+        let max_degree1 = circuit1.num_cols().next_power_of_two() * circuit1.num_rows();
+        let max_degree2 = circuit2.num_cols().next_power_of_two() * circuit2.num_rows();
+        let max_degree = std::cmp::max(max_degree1, max_degree2);
         assert!(
             max_degree.is_power_of_two(),
             "Max degree must be a power of two"
