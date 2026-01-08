@@ -389,6 +389,23 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         Ok(col_evaluations)
     }
 
+    fn recover_zerocheck_expr_evaluation(
+        &self,
+        vk: &TraceVK<F, PCS, impl Circuit<F>>,
+        col_evaluations: &Vec<F>,
+        alpha: F,
+    ) -> F {
+        let mut recomputed_zero_check_evaluation = F::zero();
+        let alpha_powers = (0..vk.circuit.zero_check_expressions().len())
+            .map(|i| alpha.pow(&[i as u64]))
+            .collect::<Vec<F>>();
+        for (expr, alpha) in zip(vk.circuit.zero_check_expressions(), alpha_powers) {
+            let eval = expr.evaluate(&col_evaluations);
+            recomputed_zero_check_evaluation += alpha * eval;
+        }
+        recomputed_zero_check_evaluation
+    }
+
     fn verify_trace_proof<C: Circuit<F>>(
         &self,
         witness_commitment: &PCS::Commitment,
@@ -432,15 +449,8 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
             transcript,
         )?;
 
-        // check that the zero-check reduced evaluation match the computed one
-        let mut recomputed_zero_check_evaluation = F::zero();
-        let alpha_powers = (0..vk.circuit.zero_check_expressions().len())
-            .map(|i| alpha.pow(&[i as u64]))
-            .collect::<Vec<F>>();
-        for (expr, alpha) in zip(vk.circuit.zero_check_expressions(), alpha_powers) {
-            let eval = expr.evaluate(&col_evaluations);
-            recomputed_zero_check_evaluation += alpha * eval;
-        }
+        let recomputed_zero_check_evaluation =
+            self.recover_zerocheck_expr_evaluation(vk, &col_evaluations, alpha);
 
         if recomputed_zero_check_evaluation != zero_check_reconstructed_eval_claim.evaluation {
             return Err("Zero check evaluation mismatch".to_string());
@@ -450,7 +460,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         if !Self::verify_opening(
             &vk.id_commitment,
             &proof.opening_id,
-            None,
+            None, // point already checked in permutation check
             log2_rows + log2_cols,
             pcs,
             transcript,
@@ -462,7 +472,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         if !Self::verify_opening(
             &vk.permutation_commitment,
             &proof.opening_permutation,
-            None,
+            None, // point already checked in permutation check
             log2_rows + log2_cols,
             pcs,
             transcript,
@@ -474,7 +484,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         if !Self::verify_opening(
             &witness_commitment,
             &proof.opening_permutation_trace,
-            None,
+            None, // point already checked in permutation check
             log2_rows + log2_cols,
             pcs,
             transcript,
