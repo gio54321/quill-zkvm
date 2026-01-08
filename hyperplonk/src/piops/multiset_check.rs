@@ -1,9 +1,10 @@
-use crate::piops::{sumcheck::SumcheckProof, EvaluationClaim};
+use crate::piops::sumcheck::SumcheckProof;
 use crate::utils::eq_eval::{eq_eval, fast_eq_eval_hypercube};
 use crate::utils::virtual_polynomial::{
     VirtualPolyExpr, VirtualPolynomialRef, VirtualPolynomialStore,
 };
 use ark_ff::PrimeField;
+use quill_pcs::EvaluationClaim;
 use quill_pcs::{MultilinearPCS, MultilinearPCSProof};
 use quill_transcript::transcript::Transcript;
 
@@ -230,8 +231,8 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         }
 
         // check that the points are consistent with the reduced sumcheck evaluation claim
-        let claimed_point_left = self.opening_proof_denom_left.evaluation_point();
-        let claimed_point_right = self.opening_proof_denom_right.evaluation_point();
+        let claimed_point_left = self.opening_proof_denom_left.point();
+        let claimed_point_right = self.opening_proof_denom_right.point();
         if claimed_point_left != sumcheck_evaluation_claim.point
             || claimed_point_right != sumcheck_evaluation_claim.point
         {
@@ -274,8 +275,8 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> MultisetEqualityProof<F, PCS> {
         }
 
         // check the equation at the evaluation point
-        let denom_left_eval = self.opening_proof_denom_left.claimed_evaluation();
-        let denom_right_eval = self.opening_proof_denom_right.claimed_evaluation();
+        let denom_left_eval = self.opening_proof_denom_left.evaluation();
+        let denom_right_eval = self.opening_proof_denom_right.evaluation();
         let left_h_eval_value = left_h_eval.evaluation;
         let right_h_eval_value = right_h_eval.evaluation;
 

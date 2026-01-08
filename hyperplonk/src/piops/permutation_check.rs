@@ -1,7 +1,7 @@
 use crate::piops::multiset_check::{LookupMode, MultisetEqualityProof};
-use crate::piops::EvaluationClaim;
 use crate::utils::virtual_polynomial::{VirtualPolynomialRef, VirtualPolynomialStore};
 use ark_ff::PrimeField;
+use quill_pcs::EvaluationClaim;
 use quill_pcs::MultilinearPCS;
 use quill_transcript::transcript::Transcript;
 

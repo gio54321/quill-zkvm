@@ -6,9 +6,21 @@ pub mod ipa;
 pub mod kzg;
 pub mod mlpcs;
 
+#[derive(Debug, Clone)]
+pub struct EvaluationClaim<F: PrimeField> {
+    pub point: Vec<F>,
+    pub evaluation: F,
+}
+
 pub trait MultilinearPCSProof<F: PrimeField> {
-    fn evaluation_point(&self) -> Vec<F>;
-    fn claimed_evaluation(&self) -> F;
+    fn point(&self) -> Vec<F>;
+    fn evaluation(&self) -> F;
+    fn evaluation_claim(&self) -> EvaluationClaim<F> {
+        EvaluationClaim {
+            point: self.point(),
+            evaluation: self.evaluation(),
+        }
+    }
 }
 
 pub trait MultilinearPCS<F: PrimeField> {

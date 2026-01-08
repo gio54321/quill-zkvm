@@ -1,11 +1,9 @@
-use crate::{
-    piops::EvaluationClaim,
-    utils::virtual_polynomial::{VirtualPolynomialRef, VirtualPolynomialStore},
-};
+use crate::utils::virtual_polynomial::{VirtualPolynomialRef, VirtualPolynomialStore};
 use ark_ff::fields::PrimeField;
 use ark_poly::Polynomial;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 use ark_std::Zero;
+use quill_pcs::EvaluationClaim;
 use quill_transcript::transcript::Transcript;
 
 /// A sumcheck proof for a virtual polynomial of the form h(g_1(x), ..., g_k(x))

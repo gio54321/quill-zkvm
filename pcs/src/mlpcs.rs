@@ -162,11 +162,11 @@ impl<E: Pairing> MLEvalProof<E> {
 }
 
 impl<E: Pairing> MultilinearPCSProof<E::ScalarField> for MLEvalProof<E> {
-    fn evaluation_point(&self) -> Vec<E::ScalarField> {
+    fn point(&self) -> Vec<E::ScalarField> {
         self.evaluation_point.clone()
     }
 
-    fn claimed_evaluation(&self) -> E::ScalarField {
+    fn evaluation(&self) -> E::ScalarField {
         self.evaluation
     }
 }

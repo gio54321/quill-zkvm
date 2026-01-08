@@ -1,8 +1,8 @@
 use crate::piops::sumcheck::SumcheckProof;
-use crate::piops::EvaluationClaim;
 use crate::utils::eq_eval::{eq_eval, fast_eq_eval_hypercube};
 use crate::utils::virtual_polynomial::{VirtualPolynomialRef, VirtualPolynomialStore};
 use ark_ff::PrimeField;
+use quill_pcs::EvaluationClaim;
 use quill_transcript::transcript::Transcript;
 
 pub struct ZeroCheckProof<F: PrimeField> {

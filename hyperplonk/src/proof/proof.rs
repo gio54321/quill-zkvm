@@ -1,9 +1,10 @@
 use crate::proof::circuit::Circuit;
 use crate::{
-    piops::{permutation_check::PermutationCheckProof, zerocheck::ZeroCheckProof, EvaluationClaim},
+    piops::{permutation_check::PermutationCheckProof, zerocheck::ZeroCheckProof},
     utils::virtual_polynomial::{VirtualPolyExpr, VirtualPolynomialStore},
 };
 use ark_ff::PrimeField;
+use quill_pcs::EvaluationClaim;
 use quill_pcs::{MultilinearPCS, MultilinearPCSProof};
 use quill_transcript::transcript::Transcript;
 use std::iter::zip;
@@ -326,18 +327,18 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         let id_evaluation_claim = EvaluationClaim {
-            point: proof.opening_id.evaluation_point(),
-            evaluation: proof.opening_id.claimed_evaluation(),
+            point: proof.opening_id.point(),
+            evaluation: proof.opening_id.evaluation(),
         };
 
         let permutation_evaluation_claim = EvaluationClaim {
-            point: proof.opening_permutation.evaluation_point(),
-            evaluation: proof.opening_permutation.claimed_evaluation(),
+            point: proof.opening_permutation.point(),
+            evaluation: proof.opening_permutation.evaluation(),
         };
 
         let permutation_trace_evaluation_claim = EvaluationClaim {
-            point: proof.opening_permutation_trace.evaluation_point(),
-            evaluation: proof.opening_permutation_trace.claimed_evaluation(),
+            point: proof.opening_permutation_trace.point(),
+            evaluation: proof.opening_permutation_trace.evaluation(),
         };
 
         if id_evaluation_claim.point.len() != log2_rows + log2_cols
@@ -368,7 +369,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         // verify zero check openings
         let mut col_evaluations = vec![];
         for (i, opening) in proof.openings_zero_check.iter().enumerate() {
-            if opening.evaluation_point() != points[i] {
+            if opening.point() != points[i] {
                 return Err("Zero check opening point mismatch".to_string());
             }
 
@@ -377,12 +378,12 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
                 return Err("Zero check opening verification failed".to_string());
             }
 
-            col_evaluations.push(opening.claimed_evaluation());
+            col_evaluations.push(opening.evaluation());
         }
 
         // check preprocessed openings
         for (i, opening) in proof.openings_preprocessed.iter().enumerate() {
-            if opening.evaluation_point() != zero_check_eval_claim.point {
+            if opening.point() != zero_check_eval_claim.point {
                 return Err("Preprocessed opening point mismatch".to_string());
             }
 
@@ -390,7 +391,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
             if !valid {
                 return Err("Preprocessed opening verification failed".to_string());
             }
-            col_evaluations.push(opening.claimed_evaluation());
+            col_evaluations.push(opening.evaluation());
         }
 
         // check that the zero-check reduced evaluation match the computed one
@@ -408,7 +409,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // verify id opening
-        if proof.opening_id.evaluation_point() != permutation_trace_evaluation_claim.point {
+        if proof.opening_id.point() != permutation_trace_evaluation_claim.point {
             return Err("ID opening point mismatch".to_string());
         }
         if !pcs.verify(&vk.id_commitment, &proof.opening_id, transcript) {
@@ -416,8 +417,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // verify permutation opening
-        if proof.opening_permutation.evaluation_point() != permutation_trace_evaluation_claim.point
-        {
+        if proof.opening_permutation.point() != permutation_trace_evaluation_claim.point {
             return Err("Permutation opening point mismatch".to_string());
         }
         if !pcs.verify(
@@ -429,9 +429,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // verify permutation trace opening
-        if proof.opening_permutation_trace.evaluation_point()
-            != permutation_trace_evaluation_claim.point
-        {
+        if proof.opening_permutation_trace.point() != permutation_trace_evaluation_claim.point {
             return Err("Permutation trace opening point mismatch".to_string());
         }
         if !pcs.verify(
@@ -608,8 +606,8 @@ mod tests {
 
         println!(
             "Opening proof at x = {:?}, y = {:?}",
-            proof.evaluation_point(),
-            proof.claimed_evaluation()
+            proof.point(),
+            proof.evaluation()
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
