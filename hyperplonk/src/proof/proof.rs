@@ -318,6 +318,12 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
 
         let zero_check_eval_claim = proof.zero_check_proof.verify(transcript)?;
         let log2_cols = (vk.circuit.num_cols()).trailing_zeros() as usize;
+        let log2_rows = (vk.circuit.num_rows()).trailing_zeros() as usize;
+
+        // ensure that the sumcheck is applied to the correct number of variables
+        if zero_check_eval_claim.point.len() != log2_rows {
+            return Err("Zero check evaluation claim point length mismatch".to_string());
+        }
 
         let id_evaluation_claim = EvaluationClaim {
             point: proof.opening_id.evaluation_point(),
@@ -333,6 +339,13 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
             point: proof.opening_permutation_trace.evaluation_point(),
             evaluation: proof.opening_permutation_trace.claimed_evaluation(),
         };
+
+        if id_evaluation_claim.point.len() != log2_rows + log2_cols
+            || permutation_evaluation_claim.point.len() != log2_rows + log2_cols
+            || permutation_trace_evaluation_claim.point.len() != log2_rows + log2_cols
+        {
+            return Err("Permutation evaluation claim point length mismatch".to_string());
+        }
 
         proof.permutation_check_proof.verify(
             transcript,

@@ -29,6 +29,14 @@ use crate::kzg::KZGOpeningProof;
 /// > f(r) * g(1/r) + f(1/r) * g(r) = r * S(r) + 1/r * S(1/r) + 2*v
 ///
 /// using suitable KZG opening proofs.
+///
+/// NOTE: if the degrees of f and g are different, the proof still works by defining the inner
+/// product as this: let d1 = deg(f), d2 = deg(g)
+///
+/// > <f, g> = sum_{i=0}^{min(d1,d2)} f_i * g_i
+///
+/// In other words, it is as if we padded the smaller polynomial with zero coefficients
+/// (or we ignore the high-degree coefficients of the larger polynomial)
 pub struct InnerProductProof<E: Pairing> {
     /// The result of the inner product
     pub inner_product: E::ScalarField,
@@ -220,6 +228,49 @@ mod tests {
 
         let proof = InnerProductProof::<Bn254>::prove(&poly1, &poly2, &kzg, &mut transcript);
         assert_eq!(proof.inner_product, Fr::from(32u64)); // 1*4 + 2*5 + 3*6 = 32
+
+        // --- VERIFIER ---
+        let mut verifier_transcript = Transcript::new(b"inner_product_test");
+        verifier_transcript.append_serializable(&comm1);
+        verifier_transcript.append_serializable(&comm2);
+        let is_valid = proof.verify(&comm1, &comm2, &kzg, &mut verifier_transcript);
+        assert!(is_valid, "Inner product proof verification failed");
+
+        let wrong_proof = InnerProductProof {
+            inner_product: proof.inner_product + Fr::one(),
+            s_comm: proof.s_comm,
+            f_opening: proof.f_opening,
+            f_opening_inv: proof.f_opening_inv,
+            g_opening: proof.g_opening,
+            g_opening_inv: proof.g_opening_inv,
+            s_opening: proof.s_opening,
+            s_opening_inv: proof.s_opening_inv,
+        };
+
+        let is_valid = wrong_proof.verify(&comm1, &comm2, &kzg, &mut verifier_transcript);
+        assert!(
+            !is_valid,
+            "Inner product proof verification should have failed but didn't"
+        );
+    }
+
+    #[test]
+    fn test_inner_product_proof_mismatched_degrees() {
+        let poly1 = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
+        let poly2 = vec![Fr::from(4u64), Fr::from(5u64)]; // smaller degree
+
+        let kzg = kzg::KZG::<Bn254>::trusted_setup(16, &mut test_rng());
+
+        // --- PROVER ---
+        let mut transcript = Transcript::new(b"inner_product_test");
+        let comm1 = kzg.commit(&poly1);
+        let comm2 = kzg.commit(&poly2);
+
+        transcript.append_serializable(&comm1);
+        transcript.append_serializable(&comm2);
+
+        let proof = InnerProductProof::<Bn254>::prove(&poly1, &poly2, &kzg, &mut transcript);
+        assert_eq!(proof.inner_product, Fr::from(14u64)); // 1*4 + 2*5 = 14
 
         // --- VERIFIER ---
         let mut verifier_transcript = Transcript::new(b"inner_product_test");

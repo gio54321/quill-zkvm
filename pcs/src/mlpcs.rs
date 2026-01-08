@@ -86,12 +86,6 @@ impl<E: Pairing> MLEvalProof<E> {
         kzg: &super::kzg::KZG<E>,
         transcript: &mut Transcript,
     ) -> Self {
-        assert_eq!(
-            poly.len(),
-            1 << eval_point.len(),
-            "Polynomial length does not match evaluation point length"
-        );
-
         // the first thing to do is to evaluate the polynomial at the given point
         let pr = Self::compute_pr(eval_point);
         let mut evaluation = E::ScalarField::zero();
@@ -219,6 +213,8 @@ mod tests {
     use ark_bn254::Bn254;
     use ark_bn254::Fr;
     use ark_ff::UniformRand;
+    use ark_poly::DenseMultilinearExtension;
+    use ark_poly::Polynomial;
     use ark_std::test_rng;
 
     #[test]
@@ -283,6 +279,10 @@ mod tests {
         let eval_point: Vec<Fr> = (0..num_vars)
             .map(|_| transcript.draw_field_element::<Fr>())
             .collect();
+
+        let poly = DenseMultilinearExtension::from_evaluations_vec(num_vars, poly.clone());
+        let expected_eval = poly.evaluate(&eval_point);
+        assert_eq!(expected_eval, proof.evaluation);
 
         assert!(
             eval_point == proof.evaluation_point,
@@ -390,5 +390,86 @@ mod tests {
             "Evaluation points do not match"
         );
         assert!(proof.verify(&commitment, &kzg, &mut transcript));
+    }
+
+    #[test]
+    fn test_mlpcs_degree_bound() {
+        let num_vars = 5;
+        let num_enforced_vars = 3;
+        let mut rng = test_rng();
+
+        // generate a random multilinear polynomial
+        let poly_size = 1 << num_vars;
+        let poly: Vec<Fr> = (0..poly_size).map(|_| Fr::rand(&mut rng)).collect();
+
+        // setup KZG
+        let kzg = kzg::KZG::<Bn254>::trusted_setup(poly_size * 4, &mut rng);
+
+        // --- PROVER ---
+        let mut transcript = Transcript::new(b"MLPCS Test");
+
+        // commit to the polynomial
+        let commitment = kzg.commit(&poly);
+        transcript.append_serializable(&commitment);
+
+        //get a random evaluation point of only 3 variables
+        let eval_point: Vec<Fr> = (0..num_enforced_vars)
+            .map(|_| transcript.draw_field_element::<Fr>())
+            .collect();
+
+        // prove
+        let proof = MLEvalProof::<Bn254>::prove(&poly, &eval_point, &kzg, &mut transcript);
+
+        let eval_subvector = (0..1 << num_enforced_vars)
+            .map(|i| poly[i])
+            .collect::<Vec<Fr>>();
+        let poly_truncated =
+            DenseMultilinearExtension::from_evaluations_vec(num_enforced_vars, eval_subvector);
+        let expected_eval = poly_truncated.evaluate(&eval_point);
+        assert_eq!(expected_eval, proof.evaluation);
+
+        // --- VERIFIER ---
+        let mut transcript = Transcript::new(b"MLPCS Test");
+        // reconstruct the commitment in the transcript
+
+        transcript.append_serializable(&commitment);
+
+        // get the evaluation point and claimed evaluation in the transcript
+        let eval_point: Vec<Fr> = (0..num_enforced_vars)
+            .map(|_| transcript.draw_field_element::<Fr>())
+            .collect();
+
+        assert!(
+            eval_point == proof.evaluation_point,
+            "Evaluation points do not match"
+        );
+        assert!(proof.verify(&commitment, &kzg, &mut transcript));
+
+        // --- VERIFIER (wrong proof) ---
+
+        let wrong_proof = MLEvalProof {
+            evaluation_point: proof.evaluation_point.clone(),
+            evaluation: proof.evaluation + Fr::one(),
+            s_comm: proof.s_comm,
+            poly_opening: proof.poly_opening,
+            poly_opening_inv: proof.poly_opening_inv,
+            s_opening: proof.s_opening,
+            s_opening_inv: proof.s_opening_inv,
+        };
+        let mut transcript = Transcript::new(b"MLPCS Test");
+        // reconstruct the commitment in the transcript
+
+        transcript.append_serializable(&commitment);
+
+        // get the evaluation point and claimed evaluation in the transcript
+        let eval_point: Vec<Fr> = (0..num_enforced_vars)
+            .map(|_| transcript.draw_field_element::<Fr>())
+            .collect();
+
+        assert!(
+            eval_point == proof.evaluation_point,
+            "Evaluation points do not match"
+        );
+        assert!(!wrong_proof.verify(&commitment, &kzg, &mut transcript));
     }
 }
