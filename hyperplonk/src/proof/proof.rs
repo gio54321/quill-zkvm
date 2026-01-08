@@ -307,59 +307,49 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
 }
 
 impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
-    fn verify_trace_proof<C: Circuit<F>>(
+    fn verify_opening(
+        comm: &PCS::Commitment,
+        proof: &PCS::Proof,
+        expected_point: Option<Vec<F>>,
+        expected_num_vars: usize,
+        pcs: &PCS,
+        transcript: &mut Transcript,
+    ) -> bool {
+        if proof.point().len() != expected_num_vars {
+            return false;
+        }
+        match expected_point {
+            Some(point) => {
+                if proof.point() != point {
+                    return false;
+                }
+            }
+            None => {}
+        }
+        pcs.verify(comm, proof, transcript)
+    }
+
+    /// Get evaluation claims for each column
+    /// Verifies that the point matches the zero-check returned evaluation point
+    /// Returns the evaluations of each column (both witness and preprocessed) in order
+    fn get_and_verify_column_evaluations(
         &self,
-        witness_commitment: &PCS::Commitment,
-        vk: &TraceVK<F, PCS, C>,
+        vk: &TraceVK<F, PCS, impl Circuit<F>>,
         pcs: &PCS,
         proof: &TraceProof<F, PCS>,
+        witness_commitment: &PCS::Commitment,
+        zero_check_reconstructed_eval_claim: &EvaluationClaim<F>,
+        log2_cols: usize,
+        log2_rows: usize,
         transcript: &mut Transcript,
-    ) -> Result<(), String> {
-        let alpha = transcript.draw_field_element::<F>();
-
-        let zero_check_eval_claim = proof.zero_check_proof.verify(transcript)?;
-        let log2_cols = (vk.circuit.num_cols()).trailing_zeros() as usize;
-        let log2_rows = (vk.circuit.num_rows()).trailing_zeros() as usize;
-
-        // ensure that the sumcheck is applied to the correct number of variables
-        if zero_check_eval_claim.point.len() != log2_rows {
+    ) -> Result<Vec<F>, String> {
+        if zero_check_reconstructed_eval_claim.point.len() != log2_rows {
             return Err("Zero check evaluation claim point length mismatch".to_string());
         }
 
-        let id_evaluation_claim = EvaluationClaim {
-            point: proof.opening_id.point(),
-            evaluation: proof.opening_id.evaluation(),
-        };
-
-        let permutation_evaluation_claim = EvaluationClaim {
-            point: proof.opening_permutation.point(),
-            evaluation: proof.opening_permutation.evaluation(),
-        };
-
-        let permutation_trace_evaluation_claim = EvaluationClaim {
-            point: proof.opening_permutation_trace.point(),
-            evaluation: proof.opening_permutation_trace.evaluation(),
-        };
-
-        if id_evaluation_claim.point.len() != log2_rows + log2_cols
-            || permutation_evaluation_claim.point.len() != log2_rows + log2_cols
-            || permutation_trace_evaluation_claim.point.len() != log2_rows + log2_cols
-        {
-            return Err("Permutation evaluation claim point length mismatch".to_string());
-        }
-
-        proof.permutation_check_proof.verify(
-            transcript,
-            &pcs,
-            permutation_trace_evaluation_claim.clone(),
-            permutation_trace_evaluation_claim.clone(),
-            id_evaluation_claim.clone(),
-            permutation_evaluation_claim.clone(),
-        )?;
-
         let mut points = vec![];
         for col in 0..vk.circuit.num_cols() {
-            let mut point = zero_check_eval_claim.point.clone();
+            let mut point = zero_check_reconstructed_eval_claim.point.clone();
             for i in 0..log2_cols {
                 point.push(F::from(((col >> i) & 1) as u64));
             }
@@ -382,17 +372,65 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
         }
 
         // check preprocessed openings
-        for (i, opening) in proof.openings_preprocessed.iter().enumerate() {
-            if opening.point() != zero_check_eval_claim.point {
-                return Err("Preprocessed opening point mismatch".to_string());
-            }
-
-            let valid = pcs.verify(&vk.preprocessed_columns_commitments[i], opening, transcript);
-            if !valid {
+        for (i, proof) in proof.openings_preprocessed.iter().enumerate() {
+            if !Self::verify_opening(
+                &vk.preprocessed_columns_commitments[i],
+                proof,
+                Some(zero_check_reconstructed_eval_claim.point.clone()),
+                log2_rows,
+                pcs,
+                transcript,
+            ) {
                 return Err("Preprocessed opening verification failed".to_string());
             }
-            col_evaluations.push(opening.evaluation());
+            col_evaluations.push(proof.evaluation());
         }
+
+        Ok(col_evaluations)
+    }
+
+    fn verify_trace_proof<C: Circuit<F>>(
+        &self,
+        witness_commitment: &PCS::Commitment,
+        vk: &TraceVK<F, PCS, C>,
+        pcs: &PCS,
+        proof: &TraceProof<F, PCS>,
+        transcript: &mut Transcript,
+    ) -> Result<(), String> {
+        let alpha = transcript.draw_field_element::<F>();
+
+        let zero_check_reconstructed_eval_claim = proof.zero_check_proof.verify(transcript)?;
+        let log2_cols = (vk.circuit.num_cols()).trailing_zeros() as usize;
+        let log2_rows = (vk.circuit.num_rows()).trailing_zeros() as usize;
+
+        // ensure that the sumcheck is applied to the correct number of variables
+        if zero_check_reconstructed_eval_claim.point.len() != log2_rows {
+            return Err("Zero check evaluation claim point length mismatch".to_string());
+        }
+
+        let id_evaluation_claim = proof.opening_id.evaluation_claim();
+        let permutation_evaluation_claim = proof.opening_permutation.evaluation_claim();
+        let permutation_trace_evaluation_claim = proof.opening_permutation_trace.evaluation_claim();
+
+        proof.permutation_check_proof.verify(
+            transcript,
+            &pcs,
+            permutation_trace_evaluation_claim.clone(),
+            permutation_trace_evaluation_claim.clone(),
+            id_evaluation_claim.clone(),
+            permutation_evaluation_claim.clone(),
+        )?;
+
+        let col_evaluations = self.get_and_verify_column_evaluations(
+            vk,
+            pcs,
+            proof,
+            witness_commitment,
+            &zero_check_reconstructed_eval_claim,
+            log2_cols,
+            log2_rows,
+            transcript,
+        )?;
 
         // check that the zero-check reduced evaluation match the computed one
         let mut recomputed_zero_check_evaluation = F::zero();
@@ -404,40 +442,44 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
             recomputed_zero_check_evaluation += alpha * eval;
         }
 
-        if recomputed_zero_check_evaluation != zero_check_eval_claim.evaluation {
+        if recomputed_zero_check_evaluation != zero_check_reconstructed_eval_claim.evaluation {
             return Err("Zero check evaluation mismatch".to_string());
         }
 
         // verify id opening
-        if proof.opening_id.point() != permutation_trace_evaluation_claim.point {
-            return Err("ID opening point mismatch".to_string());
-        }
-        if !pcs.verify(&vk.id_commitment, &proof.opening_id, transcript) {
-            return Err("ID opening verification failed".to_string());
+        if !Self::verify_opening(
+            &vk.id_commitment,
+            &proof.opening_id,
+            None,
+            log2_rows + log2_cols,
+            pcs,
+            transcript,
+        ) {
+            return Err("ID commitment opening verification failed".to_string());
         }
 
         // verify permutation opening
-        if proof.opening_permutation.point() != permutation_trace_evaluation_claim.point {
-            return Err("Permutation opening point mismatch".to_string());
-        }
-        if !pcs.verify(
+        if !Self::verify_opening(
             &vk.permutation_commitment,
             &proof.opening_permutation,
+            None,
+            log2_rows + log2_cols,
+            pcs,
             transcript,
         ) {
-            return Err("Permutation opening verification failed".to_string());
+            return Err("Permutation commitment opening verification failed".to_string());
         }
 
         // verify permutation trace opening
-        if proof.opening_permutation_trace.point() != permutation_trace_evaluation_claim.point {
-            return Err("Permutation trace opening point mismatch".to_string());
-        }
-        if !pcs.verify(
+        if !Self::verify_opening(
             &witness_commitment,
             &proof.opening_permutation_trace,
+            None,
+            log2_rows + log2_cols,
+            pcs,
             transcript,
         ) {
-            return Err("Permutation trace opening verification failed".to_string());
+            return Err("Permutation trace commitment opening verification failed".to_string());
         }
 
         Ok(())
