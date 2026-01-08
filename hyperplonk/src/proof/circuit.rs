@@ -12,13 +12,13 @@ pub trait Circuit<F: PrimeField> {
     /// Must be a power of two
     fn num_cols(&self) -> usize;
 
-    /// Number of preprocessed columns (fixed by the circuit description)
-    fn num_preprocessed_columns(&self) -> usize;
+    /// Number of public columns (fixed by the circuit description)
+    fn num_public_columns(&self) -> usize;
 
-    /// Preprocessed values for the preprocessed columns.
-    /// Must return a vector of length `num_preprocessed_columns()`,
+    /// Public values for the public columns.
+    /// Must return a vector of length `num_public_columns()`,
     /// each containing a vector of length `num_rows()`.
-    fn preprocessed_values(&self) -> Vec<Vec<F>>;
+    fn public_values(&self) -> Vec<Vec<F>>;
 
     /// Constraint expression that is enforced to be zero for every row, given
     /// the columns reference indices.
@@ -26,7 +26,7 @@ pub trait Circuit<F: PrimeField> {
     ///
     /// **ASSUMES**: the input allocation is as follows: input indices 0..num_cols()
     /// refer to the witness columns, while input indices
-    /// num_cols()..num_cols()+num_preprocessed_columns() refer to the preprocessed columns.
+    /// num_cols()..num_cols()+num_public_columns() refer to the public columns.
     fn zero_check_expressions(&self) -> Vec<VirtualPolyExpr<F>>;
 
     /// Permutation mapping for the trace cells

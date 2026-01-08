@@ -18,7 +18,7 @@ pub struct TraceProof<F: PrimeField, PCS: MultilinearPCS<F>> {
     pub zero_check_proof: ZeroCheckProof<F>,
     pub permutation_check_proof: PermutationCheckProof<F, PCS>,
     pub openings_zero_check: Vec<PCS::Proof>,
-    pub openings_preprocessed: Vec<PCS::Proof>,
+    pub openings_public: Vec<PCS::Proof>,
     pub opening_id: PCS::Proof,
     pub opening_permutation: PCS::Proof,
     pub opening_permutation_trace: PCS::Proof,
@@ -31,7 +31,7 @@ pub struct HyperPlonkProof<F: PrimeField, PCS: MultilinearPCS<F>> {
 
 pub struct TraceVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
     pub circuit: C,
-    pub preprocessed_columns_commitments: Vec<PCS::Commitment>,
+    pub public_columns_commitments: Vec<PCS::Commitment>,
     pub id_commitment: PCS::Commitment,
     pub permutation_commitment: PCS::Commitment,
 }
@@ -40,7 +40,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F> + Clone> Clone for Tra
     fn clone(&self) -> Self {
         TraceVK {
             circuit: self.circuit.clone(),
-            preprocessed_columns_commitments: self.preprocessed_columns_commitments.clone(),
+            public_columns_commitments: self.public_columns_commitments.clone(),
             id_commitment: self.id_commitment.clone(),
             permutation_commitment: self.permutation_commitment.clone(),
         }
@@ -50,7 +50,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F> + Clone> Clone for Tra
 pub struct TracePK<F: PrimeField> {
     pub id_poly: Vec<F>,
     pub permutation_poly: Vec<F>,
-    pub preprocessed_values: Vec<Vec<F>>,
+    pub public_values: Vec<Vec<F>>,
 }
 
 pub struct HyperPlonkVK<F: PrimeField, PCS: MultilinearPCS<F>, C: Circuit<F>> {
@@ -73,20 +73,20 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         let trace_num_vars = circuit.num_rows().trailing_zeros() as usize
             + circuit.num_cols().trailing_zeros() as usize;
 
-        // pad the preprocessed columns to the full trace size with zeros and commit to them
-        let mut preprocessed_values = circuit.preprocessed_values();
-        for i in 0..preprocessed_values.len() {
+        // pad the public columns to the full trace size with zeros and commit to them
+        let mut public_values = circuit.public_values();
+        for i in 0..public_values.len() {
             assert_eq!(
-                preprocessed_values[i].len(),
+                public_values[i].len(),
                 circuit.num_rows(),
-                "Preprocessed column length mismatch"
+                "Public column length mismatch"
             );
-            preprocessed_values[i]
+            public_values[i]
                 .extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
         }
 
         // TODO: make those into a single polynomial
-        let preprocessed_commitments = preprocessed_values
+        let public_commitments = public_values
             .iter()
             .map(|col| pcs.commit(col))
             .collect::<Vec<_>>();
@@ -110,14 +110,14 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
 
         let vk = TraceVK {
             circuit: circuit.clone(),
-            preprocessed_columns_commitments: preprocessed_commitments,
+            public_columns_commitments: public_commitments,
             id_commitment,
             permutation_commitment,
         };
         let pk = TracePK {
             id_poly: id_evals,
             permutation_poly: permutation_evals,
-            preprocessed_values,
+            public_values,
         };
         (pk, vk)
     }
@@ -159,8 +159,8 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         for column in witness {
             poly_store.allocate_polynomial(column);
         }
-        for preprocessed in circuit.preprocessed_values() {
-            poly_store.allocate_polynomial(&preprocessed);
+        for public in circuit.public_values() {
+            poly_store.allocate_polynomial(&public);
         }
 
         // batch together all constraints into a single expression using a random alpha
@@ -210,17 +210,17 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             openings_zero_check.push(opening);
         }
 
-        // compute openings for the preprocessed columns at the zero-check evaluation point
+        // compute openings for the public columns at the zero-check evaluation point
         // this is not strictly necessary, but it saves some work to the verifier
-        let preprocessed_columns = circuit.preprocessed_values();
-        let mut openings_preprocessed = vec![];
-        for i in 0..circuit.num_preprocessed_columns() {
+        let public_columns = circuit.public_values();
+        let mut openings_public = vec![];
+        for i in 0..circuit.num_public_columns() {
             let opening = pcs.open(
-                &preprocessed_columns[i],
+                &public_columns[i],
                 &zero_check_eval_claim.point,
                 transcript,
             );
-            openings_preprocessed.push(opening);
+            openings_public.push(opening);
         }
 
         // compute openings for the id and permutation polynomials at the permutation check evaluation point
@@ -234,7 +234,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
             zero_check_proof,
             permutation_check_proof,
             openings_zero_check,
-            openings_preprocessed,
+            openings_public,
             opening_id,
             opening_permutation,
             opening_permutation_trace,
@@ -331,7 +331,7 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
 
     /// Get evaluation claims for each column
     /// Verifies that the point matches the zero-check returned evaluation point
-    /// Returns the evaluations of each column (both witness and preprocessed) in order
+    /// Returns the evaluations of each column (both witness and public) in order
     fn get_and_verify_column_evaluations(
         &self,
         vk: &TraceVK<F, PCS, impl Circuit<F>>,
@@ -371,17 +371,17 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> HyperPlonkProof<F, PCS> {
             col_evaluations.push(opening.evaluation());
         }
 
-        // check preprocessed openings
-        for (i, proof) in proof.openings_preprocessed.iter().enumerate() {
+        // check public columns openings
+        for (i, proof) in proof.openings_public.iter().enumerate() {
             if !Self::verify_opening(
-                &vk.preprocessed_columns_commitments[i],
+                &vk.public_columns_commitments[i],
                 proof,
                 Some(zero_check_reconstructed_eval_claim.point.clone()),
                 log2_rows,
                 pcs,
                 transcript,
             ) {
-                return Err("Preprocessed opening verification failed".to_string());
+                return Err("Public opening verification failed".to_string());
             }
             col_evaluations.push(proof.evaluation());
         }

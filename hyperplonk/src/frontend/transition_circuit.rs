@@ -84,24 +84,24 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
         self.num_columns.next_power_of_two()
     }
 
-    fn num_preprocessed_columns(&self) -> usize {
+    fn num_public_columns(&self) -> usize {
         // we need to allocate one selector poly for each boundary constraint
         // NOTE: this could be reduced to log(n) selectors, probably, but the degree of the constraints would increase
         self.boundary_constraints.len()
     }
 
-    fn preprocessed_values(&self) -> Vec<Vec<F>> {
-        let mut preprocessed =
-            vec![vec![F::zero(); self.num_rows()]; self.num_preprocessed_columns()];
+    fn public_values(&self) -> Vec<Vec<F>> {
+        let mut public =
+            vec![vec![F::zero(); self.num_rows()]; self.num_public_columns()];
         for (i, (row, _)) in self.boundary_constraints.iter().enumerate() {
-            preprocessed[i][*row] = F::one();
+            public[i][*row] = F::one();
         }
-        preprocessed
+        public
     }
 
     fn zero_check_expressions(&self) -> Vec<VirtualPolyExpr<F>> {
         // the mapping is 0..num_cols() -> witness columns
-        // num_cols()..num_cols()+num_preprocessed_columns() -> preprocessed columns
+        // num_cols()..num_cols()+num_public_columns() -> public columns
         // we already have the recurring constraints over the witness columns, so return them
         // as is
         let mut constraints = self.recurring_constraints.clone();
