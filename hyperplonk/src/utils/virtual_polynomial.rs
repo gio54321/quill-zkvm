@@ -336,4 +336,8 @@ impl<F: PrimeField> VirtualPolynomialStore<F> {
     ) -> &DenseMultilinearExtension<F> {
         &self.polynomials[g_index.index]
     }
+
+    pub fn get_expr(&self, index: &VirtualPolynomialRef) -> VirtualPolyExpr<F> {
+        self.virtual_polys[index.index].clone()
+    }
 }
