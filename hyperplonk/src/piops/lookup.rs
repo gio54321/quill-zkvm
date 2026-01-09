@@ -153,26 +153,22 @@ mod tests {
     use quill_pcs::kzg::KZG;
     use rand::Rng;
 
-    #[test]
-    fn test_byte_xor_42() {
-        let mut rng = test_rng();
-        let num_vars_source = 10;
-        let num_vars_table = 8;
+    fn get_xor_42_table() -> (Vec<Fr>, Vec<Fr>) {
+        let mut xor_col1 = vec![Fr::zero(); 256];
+        let mut xor_col2 = vec![Fr::zero(); 256];
 
-        println!("KZG setup...");
-        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1 << num_vars_source, &mut rng);
-        println!("KZG setup done.");
-
-        // xor 42 table: generate all tuples (x, x ^ 42) for x \in (0, 255)
-        let mut xor_col1 = vec![Fr::zero(); 1 << num_vars_table];
-        let mut xor_col2 = vec![Fr::zero(); 1 << num_vars_table];
-
-        for i in 0..(1 << num_vars_table) {
+        for i in 0..256 {
             xor_col1[i] = Fr::from(i as u64);
             xor_col2[i] = Fr::from((i as u64) ^ 42);
         }
+        (xor_col1, xor_col2)
+    }
 
-        let poly_degree = 1 << num_vars_source;
+    fn generate_claimed_columns<R: Rng>(
+        num_vars: usize,
+        rng: &mut R,
+    ) -> (Vec<Fr>, Vec<Fr>, Vec<Fr>) {
+        let poly_degree = 1 << num_vars;
         let claimed_bytes_u8 = (0..poly_degree)
             .map(|_| rng.gen_range(0..256) as u8)
             .collect::<Vec<u8>>();
@@ -188,13 +184,29 @@ mod tests {
             .collect::<Vec<Fr>>();
 
         // compute multiplicities
-        let mut multiplicities_table = vec![Fr::zero(); xor_col1.len()];
+        let mut multiplicities_table = vec![Fr::zero(); 256];
 
         // NOTE: exploits the fact that the first column are the bytes 0..255
         for &b in claimed_bytes_u8.iter() {
             let b_usize: usize = b as usize;
             multiplicities_table[b_usize] += Fr::one();
         }
+        (claimed_bytes, claimed_outputs, multiplicities_table)
+    }
+
+    #[test]
+    fn test_byte_xor_42() {
+        let mut rng = test_rng();
+        let num_vars_source = 10;
+        let num_vars_table = 8;
+
+        println!("KZG setup...");
+        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1 << num_vars_source, &mut rng);
+        println!("KZG setup done.");
+
+        let (xor_col1, xor_col2) = get_xor_42_table();
+        let (claimed_bytes, claimed_outputs, multiplicities_table) =
+            generate_claimed_columns(num_vars_source, &mut rng);
 
         println!("Creating virtual polynomial store...");
 
@@ -280,6 +292,105 @@ mod tests {
             "Set inclusion proof verification failed: {:?}",
             verify_result.err()
         );
+        println!("Set inclusion proof verified successfully.");
+    }
+
+    #[test]
+    fn test_byte_xor_42_invalid() {
+        let mut rng = test_rng();
+        let num_vars_source = 10;
+        let num_vars_table = 8;
+
+        println!("KZG setup...");
+        let pcs = KZG::<ark_bn254::Bn254>::trusted_setup(1 << num_vars_source, &mut rng);
+        println!("KZG setup done.");
+
+        let (xor_col1, xor_col2) = get_xor_42_table();
+        let (claimed_bytes, mut claimed_outputs, multiplicities_table) =
+            generate_claimed_columns(num_vars_source, &mut rng);
+
+        claimed_outputs[0] += Fr::one();
+
+        println!("Creating virtual polynomial store...");
+
+        let mut store1 = VirtualPolynomialStore::new(num_vars_source);
+        let source1 = store1.allocate_polynomial(&claimed_bytes);
+        let source2 = store1.allocate_polynomial(&claimed_outputs);
+        let source1_virtual = store1.new_virtual_from_input(&source1);
+        let source2_virtual = store1.new_virtual_from_input(&source2);
+
+        let mut store2 = VirtualPolynomialStore::new(num_vars_table);
+        let dest1 = store2.allocate_polynomial(&xor_col1);
+        let dest2 = store2.allocate_polynomial(&xor_col2);
+        let multiplicities = store2.allocate_polynomial(&multiplicities_table);
+        let dest1_virtual = store2.new_virtual_from_input(&dest1);
+        let dest2_virtual = store2.new_virtual_from_input(&dest2);
+        let multiplicities_virtual = store2.new_virtual_from_input(&multiplicities);
+
+        let mut transcript = Transcript::new(b"lookup_test");
+
+        println!("Proving set inclusion...");
+        let (proof, evaluations) = LookupProof::prove(
+            &mut store1,
+            &vec![source1_virtual, source2_virtual],
+            &mut store2,
+            &vec![dest1_virtual, dest2_virtual],
+            &multiplicities_virtual,
+            &mut transcript,
+            &pcs,
+        );
+
+        // -- Verifier --
+        let mut verifier_transcript = Transcript::new(b"lookup_test");
+        let source1_eval_claim = EvaluationClaim {
+            point: evaluations.left.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(
+                num_vars_source,
+                claimed_bytes,
+            )
+            .evaluate(&evaluations.left),
+        };
+        let source2_eval_claim = EvaluationClaim {
+            point: evaluations.left.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(
+                num_vars_source,
+                claimed_outputs,
+            )
+            .evaluate(&evaluations.left),
+        };
+
+        let dest1_eval_claim = EvaluationClaim {
+            point: evaluations.right.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars_table, xor_col1)
+                .evaluate(&evaluations.right),
+        };
+        let dest2_eval_claim = EvaluationClaim {
+            point: evaluations.right.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(num_vars_table, xor_col2)
+                .evaluate(&evaluations.right),
+        };
+
+        let multiplicities_eval_claim = EvaluationClaim {
+            point: evaluations.right.clone(),
+            evaluation: DenseMultilinearExtension::from_evaluations_vec(
+                num_vars_table,
+                multiplicities_table,
+            )
+            .evaluate(&evaluations.right),
+        };
+
+        println!("Verifying set inclusion proof...");
+        let verify_result = proof.verify(
+            &mut verifier_transcript,
+            &pcs,
+            LookupEvaluationClaims {
+                source_claims: vec![source1_eval_claim, source2_eval_claim],
+                dests_claims: vec![dest1_eval_claim, dest2_eval_claim],
+                multiplicities_claim: multiplicities_eval_claim,
+            },
+        );
+
+        assert!(verify_result.is_err(), "Lookup proof should have failed");
         println!("Set inclusion proof verified successfully.");
     }
 }
