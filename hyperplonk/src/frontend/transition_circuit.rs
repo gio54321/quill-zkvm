@@ -91,8 +91,7 @@ impl<F: PrimeField> Circuit<F> for TransitionCircuit<F> {
     }
 
     fn public_values(&self) -> Vec<Vec<F>> {
-        let mut public =
-            vec![vec![F::zero(); self.num_rows()]; self.num_public_columns()];
+        let mut public = vec![vec![F::zero(); self.num_rows()]; self.num_public_columns()];
         for (i, (row, _)) in self.boundary_constraints.iter().enumerate() {
             public[i][*row] = F::one();
         }

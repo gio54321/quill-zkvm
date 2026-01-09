@@ -81,8 +81,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
                 circuit.num_rows(),
                 "Public column length mismatch"
             );
-            public_values[i]
-                .extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
+            public_values[i].extend(vec![F::zero(); (1 << trace_num_vars) - circuit.num_rows()]);
         }
 
         // TODO: make those into a single polynomial
@@ -215,11 +214,7 @@ impl<F: PrimeField, C: Circuit<F> + Clone, PCS: MultilinearPCS<F>> HyperPlonk<F,
         let public_columns = circuit.public_values();
         let mut openings_public = vec![];
         for i in 0..circuit.num_public_columns() {
-            let opening = pcs.open(
-                &public_columns[i],
-                &zero_check_eval_claim.point,
-                transcript,
-            );
+            let opening = pcs.open(&public_columns[i], &zero_check_eval_claim.point, transcript);
             openings_public.push(opening);
         }
 
