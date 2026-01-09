@@ -61,8 +61,8 @@ pub struct SetInclusionProof<F: PrimeField, PCS: MultilinearPCS<F>> {
 }
 
 pub struct SetInclusionEvaluationPoints<F: PrimeField> {
-    pub left_sumcheck_point: Vec<F>,
-    pub right_sumcheck_point: Vec<F>,
+    pub left: Vec<F>,
+    pub right: Vec<F>,
 }
 
 pub struct SetInclusionEvaluationClaims<F: PrimeField> {
@@ -227,8 +227,8 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> SetInclusionProof<F, PCS> {
         };
 
         let points = SetInclusionEvaluationPoints {
-            left_sumcheck_point: sumcheck_eval_claim_left.point,
-            right_sumcheck_point: sumcheck_eval_claim_right.point,
+            left: sumcheck_eval_claim_left.point,
+            right: sumcheck_eval_claim_right.point,
         };
 
         (proof, points)
@@ -405,7 +405,7 @@ mod tests {
         let mut transcript = Transcript::new(b"lookup_test");
 
         println!("Proving set inclusion...");
-        let (proof, evaluations) = SetInclusionProof::prove(
+        let (proof, evaluation_points) = SetInclusionProof::prove(
             &mut store1,
             &source_virtual,
             &mut store2,
@@ -418,30 +418,30 @@ mod tests {
         // -- Verifier --
         let mut verifier_transcript = Transcript::new(b"lookup_test");
         let source_eval_claim = EvaluationClaim {
-            point: evaluations.left_sumcheck_point.clone(),
+            point: evaluation_points.left.clone(),
             evaluation: DenseMultilinearExtension::from_evaluations_vec(
                 num_vars_source,
                 claimed_bytes,
             )
-            .evaluate(&evaluations.left_sumcheck_point),
+            .evaluate(&evaluation_points.left),
         };
 
         let dest_eval_claim = EvaluationClaim {
-            point: evaluations.right_sumcheck_point.clone(),
+            point: evaluation_points.right.clone(),
             evaluation: DenseMultilinearExtension::from_evaluations_vec(
                 num_vars_table,
                 bytes_table,
             )
-            .evaluate(&evaluations.right_sumcheck_point),
+            .evaluate(&evaluation_points.right),
         };
 
         let multiplicities_eval_claim = EvaluationClaim {
-            point: evaluations.right_sumcheck_point.clone(),
+            point: evaluation_points.right.clone(),
             evaluation: DenseMultilinearExtension::from_evaluations_vec(
                 num_vars_table,
                 multiplicities_table,
             )
-            .evaluate(&evaluations.right_sumcheck_point),
+            .evaluate(&evaluation_points.right),
         };
 
         println!("Verifying set inclusion proof...");
@@ -513,7 +513,7 @@ mod tests {
         let mut transcript = Transcript::new(b"lookup_test");
 
         println!("Proving Set inclusion...");
-        let (proof, evaluations) = SetInclusionProof::prove(
+        let (proof, evaluation_points) = SetInclusionProof::prove(
             &mut store1,
             &source_virtual,
             &mut store2,
@@ -526,30 +526,30 @@ mod tests {
         // -- Verifier --
         let mut verifier_transcript = Transcript::new(b"lookup_test");
         let source_eval_claim = EvaluationClaim {
-            point: evaluations.left_sumcheck_point.clone(),
+            point: evaluation_points.left.clone(),
             evaluation: DenseMultilinearExtension::from_evaluations_vec(
                 num_vars_source,
                 claimed_bytes,
             )
-            .evaluate(&evaluations.left_sumcheck_point),
+            .evaluate(&evaluation_points.left),
         };
 
         let dest_eval_claim = EvaluationClaim {
-            point: evaluations.right_sumcheck_point.clone(),
+            point: evaluation_points.right.clone(),
             evaluation: DenseMultilinearExtension::from_evaluations_vec(
                 num_vars_table,
                 bytes_table,
             )
-            .evaluate(&evaluations.right_sumcheck_point),
+            .evaluate(&evaluation_points.right),
         };
 
         let multiplicities_eval_claim = EvaluationClaim {
-            point: evaluations.right_sumcheck_point.clone(),
+            point: evaluation_points.right.clone(),
             evaluation: DenseMultilinearExtension::from_evaluations_vec(
                 num_vars_table,
                 multiplicities_table,
             )
-            .evaluate(&evaluations.right_sumcheck_point),
+            .evaluate(&evaluation_points.right),
         };
 
         println!("Verifying Set inclusion proof...");
