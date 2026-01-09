@@ -299,6 +299,13 @@ impl<F: PrimeField, PCS: MultilinearPCS<F>> SetInclusionProof<F, PCS> {
             return Err("Left sumcheck point does not match PCS opening point".to_string());
         }
 
+        if evals.h_left_sumcheck_claim.point != denom_left_claim.point
+            || evals.h_right_sumcheck_claim.point != denom_right_claim.point
+            || evals.multiplicities_claim.point != denom_right_claim.point
+        {
+            return Err("Mismatched evaluation points for set inclusion".to_string());
+        }
+
         if denom_right_claim.point != self.opening_proof_denom_right.point() {
             return Err("Right sumcheck point does not match PCS opening point".to_string());
         }
